@@ -43,27 +43,31 @@ def read_csv(filename, dataset_dir):
 		return lines
 
 
-def process_csv(filename, dataset_dir, output_dim, seq_len, batch_size, val=5):
+def process_csv(filename, dataset_dir, output_dim, seq_len, batch_size, val=5, test=2):
 	sum_f = np.float128([0.0] * output_dim)
 	sum_sq_f = np.float128([0.0] * output_dim)
 	lines = read_csv(dataset_dir + "/" + filename, dataset_dir)
 	# leave val% for validation
 	train_seq = []
 	valid_seq = []
+	test_seq = []
 	cnt = 0
+	frames_per_batch = seq_len * batch_size
 	for ln in lines:
-		if cnt < seq_len * batch_size * (100 - val):
+		if cnt < frames_per_batch * (100 - val - test):
 			train_seq.append(ln)
 			sum_f += ln[1]
 			sum_sq_f += ln[1] * ln[1]
-		else:
+		elif cnt < frames_per_batch * (100 - test):
 			valid_seq.append(ln)
+		else:
+			test_seq.append(ln)
 		cnt += 1
-		cnt %= seq_len * batch_size * 100
+		cnt %= frames_per_batch * 100
 	mean = sum_f / len(train_seq)
 	var = sum_sq_f / len(train_seq) - mean * mean
 	std = np.sqrt(var)
 	print({'train_seq': len(train_seq), 'valid_seq': len(valid_seq)})
 	print(
 		{'mean': mean, 'std': std})  # we will need these statistics to normalize the outputs (and ground truth inputs)
-	return train_seq, valid_seq, mean, std
+	return train_seq, valid_seq, test_seq, mean, std

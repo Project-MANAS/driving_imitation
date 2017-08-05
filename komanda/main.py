@@ -30,12 +30,15 @@ CSV_HEADER = "index,timestamp,width,height,frame_id,filename,angle,torque,speed,
 OUTPUTS = CSV_HEADER[-6:-3]  # angle,torque,speed
 OUTPUT_DIM = len(OUTPUTS)  # predict all features: steering angle, torque and vehicle speed
 
-checkpoint_dir = os.environ['CHECKPOINTS'] + "/udacity_steering/v3"
-dataset_dir = os.environ['DATASETS'] + "/udacity_steering/output"
+CHECKPOINT_DIR = os.environ['CHECKPOINTS'] + "/udacity_steering/challenge_2/v3"
+DATASET_DIR = os.environ['DATASETS'] + "/udacity_steering/challenge_2"
 
-train_seq, valid_seq, mean, std = dataset.process_csv("/interpolated.csv", dataset_dir, OUTPUT_DIM, SEQ_LEN,
-													  BATCH_SIZE, val=5)  # concatenated interpolated.csv from rosbags
-# test_seq = read_csv("challenge_2/exampleSubmissionInterpolatedFinal.csv") # interpolated.csv for testset filled with dummy values
+train_seq, valid_seq, test_seq, mean, std = dataset.process_csv("interpolated.csv", DATASET_DIR + "/bag_extraction",
+																OUTPUT_DIM,
+																SEQ_LEN,
+																BATCH_SIZE,
+																val=5,
+																test=2)  # concatenated interpolated.csv from rosbags
 
 import tensorflow as tf
 from tensorflow.python.util import nest
@@ -217,20 +220,22 @@ with graph.as_default():
 		tf.summary.scalar("rmse_autoregressive", mse_autoregressive_sqrt)
 
 		summaries = tf.summary.merge_all()
-		train_writer = tf.summary.FileWriter(checkpoint_dir + '/train_summary', graph=graph)
-		valid_writer = tf.summary.FileWriter(checkpoint_dir + '/valid_summary', graph=graph)
+		train_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/train_summary', graph=graph)
+		valid_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
+		test_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
 		saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
 
 gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=1.0)
 
 global_train_step = 0
 global_valid_step = 0
+global_test_step = 0
 
 KEEP_PROB_TRAIN = 0.25
 
 
 def do_epoch(session, sequences, mode):
-	global global_train_step, global_valid_step
+	global global_train_step, global_valid_step, test_valid_step
 	test_predictions = {}
 	valid_predictions = {}
 	batch_generator = dataset.BatchGenerator(sequence=sequences, seq_len=SEQ_LEN, batch_size=BATCH_SIZE,
@@ -260,23 +265,24 @@ def do_epoch(session, sequences, mode):
 							feed_dict=feed_dict)
 			valid_writer.add_summary(summary, global_valid_step)
 			global_valid_step += 1
-			feed_inputs = feed_inputs[:, LEFT_CONTEXT:].flatten()
 			steering_targets = feed_targets[:, :, 0].flatten()
+			feed_inputs = feed_inputs[:, LEFT_CONTEXT:].flatten()
 			model_predictions = model_predictions.flatten()
 			stats = np.stack([steering_targets, model_predictions, (steering_targets - model_predictions) ** 2])
 			for i, img in enumerate(feed_inputs):
 				valid_predictions[img] = stats[:, i]
 		elif mode == "test":
-			model_predictions, controller_final_state_autoregressive_cur = \
-				session.run([steering_predictions, controller_final_state_autoregressive],
+			model_predictions, summary, loss, controller_final_state_autoregressive_cur = \
+				session.run([steering_predictions, summaries, mse_autoregressive_steering,
+							 controller_final_state_autoregressive],
 							feed_dict=feed_dict)
+			test_writer.add_summary(summary, global_test_step)
 			feed_inputs = feed_inputs[:, LEFT_CONTEXT:].flatten()
 			model_predictions = model_predictions.flatten()
 			for i, img in enumerate(feed_inputs):
 				test_predictions[img] = model_predictions[i]
-		if mode != "test":
-			acc_loss += loss
-			print('\r', step + 1, "/", total_num_steps, np.sqrt(acc_loss / (step + 1)), )
+		acc_loss += loss
+		print('\r', step + 1, "/", total_num_steps, np.sqrt(acc_loss / (step + 1)), )
 	return (np.sqrt(acc_loss / total_num_steps), valid_predictions) if mode != "test" else (None, test_predictions)
 
 
@@ -289,32 +295,38 @@ with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options,
 	with tf.device('/gpu:0'):
 		session.run(tf.global_variables_initializer())
 		print('Initialized')
-		ckpt = tf.train.latest_checkpoint(checkpoint_dir)
+		ckpt = tf.train.latest_checkpoint(CHECKPOINT_DIR)
 		if ckpt:
 			print("Restoring from", ckpt)
 			saver.restore(sess=session, save_path=ckpt)
 		for epoch in range(NUM_EPOCHS):
 			print("Starting epoch %d / %d" % (epoch, NUM_EPOCHS))
+
 			print("Validation:")
 			valid_score, valid_predictions = do_epoch(session=session, sequences=valid_seq, mode="valid")
+
 			if best_validation_score is None:
 				best_validation_score = valid_score
 			if valid_score < best_validation_score:
-				saver.save(session, checkpoint_dir + '/checkpoint-sdc-ch2')
+				saver.save(session, CHECKPOINT_DIR + '/checkpoint-sdc-ch2')
 				best_validation_score = valid_score
 				print('\r', "SAVED at epoch %d" % epoch, )
-				with open(checkpoint_dir + "/valid-predictions-epoch%d" % epoch, "w") as out:
+				with open(CHECKPOINT_DIR + "/valid-predictions-epoch%d" % epoch, "w") as out:
 					result = np.float128(0.0)
 					for img, stats in valid_predictions.items():
 						print(img, stats) >> out
 						result += stats[-1]
 				print("Validation unnormalized RMSE:", np.sqrt(result / len(valid_predictions)))
-			# with open(checkpoint_dir+"/test-predictions-epoch%d" % epoch, "w") as out:
-			#     _, test_predictions = do_epoch(session=session, sequences=test_seq, mode="test")
-			#     print("frame_id,steering_angle")>>out
-			#     for img, pred in test_predictions.items():
-			#         img = img.replace("challenge_2/Test-final/center/", "")
-			#         print("%s,%f" % (img, pred))>>out
+
 			if epoch != NUM_EPOCHS - 1:
 				print("Training")
 				do_epoch(session=session, sequences=train_seq, mode="train")
+
+			if epoch == NUM_EPOCHS - 1:
+				print("Test:")
+				with open(CHECKPOINT_DIR + "/test-predictions-epoch%d" % epoch, "w") as out:
+					_, test_predictions = do_epoch(session=session, sequences=test_seq, mode="test")
+					print("frame_id,steering_angle")
+					for img, pred in test_predictions.items():
+						img = img.replace("challenge_2/Test-final/center/", "")
+						print("%s,%f" % (img, pred))
