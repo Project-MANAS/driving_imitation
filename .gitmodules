@@ -1,0 +1,3 @@
+[submodule "manas/ai/dataset"]
+	path = manas/ai/dataset
+	url = https://gitlab.com/project-manas-ai/common/python/dataset.git
