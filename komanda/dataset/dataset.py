@@ -3,6 +3,8 @@ from enum import Enum
 
 import numpy as np
 
+import tensorflow as tf
+
 # define some constants
 
 # RNNs are typically trained using (truncated) backprop through time. SEQ_LEN here is the length of BPTT.
