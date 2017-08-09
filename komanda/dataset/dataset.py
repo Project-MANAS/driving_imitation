@@ -3,6 +3,8 @@ from enum import Enum
 
 import numpy as np
 
+import tensorflow as tf
+
 # define some constants
 
 # RNNs are typically trained using (truncated) backprop through time. SEQ_LEN here is the length of BPTT.
@@ -143,6 +145,44 @@ class DatasetIndices(object):
 							BATCH_SIZE,
 							val=5,
 							test=2)  # concatenated interpolated.csv from rosbags
+
+
+class Dataset(object):
+	def __init__(self, dataset_indices: DatasetIndices):
+		data_shape = [BATCH_SIZE, (LEFT_CONTEXT + SEQ_LEN), HEIGHT, WIDTH, CHANNELS]
+		data_dtype = tf.float32
+		target_shape = [BATCH_SIZE, SEQ_LEN, OUTPUT_DIM]
+		target_dtype = tf.float32
+
+		self.input_placeholder = tf.placeholder(dtype=data_dtype, shape=data_shape)
+		self.target_placeholder = tf.placeholder(dtype=target_dtype, shape=target_shape)
+		self.dataset = tf.contrib.data.Dataset.from_tensor_slices((self.input_placeholder, self.target_placeholder))
+
+		batch_gen = BatchGenerator(dataset_indices.sequence, SEQ_LEN, BATCH_SIZE, LEFT_CONTEXT)
+
+		input_indices = tf.placeholder(shape=(BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN),
+									   dtype=tf.string)  # pathes to png files from the central camera
+		targets = tf.placeholder(shape=(BATCH_SIZE, SEQ_LEN, OUTPUT_DIM),
+								 dtype=tf.float32)  # seq_len x batch_size x OUTPUT_DIM
+
+		input_images = tf.stack(
+			[tf.image.decode_png(tf.read_file(x)) for x in
+			 tf.unstack(
+				 tf.reshape(input_indices, shape=[(LEFT_CONTEXT + SEQ_LEN) * BATCH_SIZE]))
+			 ]
+		)
+		input_images = tf.cast(input_images, tf.float32) * 2.0 / 255.0 - 1.0
+		input_images.set_shape([(LEFT_CONTEXT + SEQ_LEN) * BATCH_SIZE, HEIGHT, WIDTH, CHANNELS])
+		video = tf.reshape(input_images, shape=[BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS])
+
+		targets_normalized = (targets - self.dataset_indices.mean) / self.dataset_indices.std
+
+		while not self.coord.should_stop():
+			# TODO directly tie image processing to dataset
+			feed_input_indices, feed_targets = index_batch_generator.next()
+			input_batch, target_batch = sess.run([video, targets_normalized],
+												 feed_dict={input_indices: feed_input_indices,
+															targets: feed_targets})
 
 
 # TODO Remove

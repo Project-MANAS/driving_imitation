@@ -1,4 +1,5 @@
 import tensorflow as tf
+import threading
 
 from manas.ai.dataset.input_pipeline import InputPipeline, InputPipelineOptions
 from manas.ai.planning.komanda.dataset.dataset import *
@@ -8,10 +9,10 @@ pipelineOptions.batch_size = 5
 pipelineOptions.enqueue_size = 1
 pipelineOptions.min_after_dequeue = 6
 
-
-class Pipeline(InputPipeline):
+class Pipeline(object):
 	def __init__(self, graph, sess, options: InputPipelineOptions):
 		self.graph = graph
+		self.sess = sess
 		self.dataset_indices = None
 
 		data_shape = [BATCH_SIZE, (LEFT_CONTEXT + SEQ_LEN), HEIGHT, WIDTH, CHANNELS]
@@ -19,11 +20,13 @@ class Pipeline(InputPipeline):
 		target_shape = [BATCH_SIZE, SEQ_LEN, OUTPUT_DIM]
 		target_dtype = tf.float32
 
-		input_placeholder = tf.placeholder(dtype=data_dtype, shape=data_shape)
-		target_placeholder = tf.placeholder(dtype=target_dtype, shape=target_shape)
-		InputPipeline.__init__(self, sess=sess, queue_data_placeholder=input_placeholder,
-							   queue_target_placeholder=target_placeholder, dtypes=[data_dtype, target_dtype],
-							   shapes=[data_shape[1:], target_shape[1:]], options=options)
+		self.input_placeholder = tf.placeholder(dtype=data_dtype, shape=data_shape)
+		self.target_placeholder = tf.placeholder(dtype=target_dtype, shape=target_shape)
+		# InputPipeline.__init__(self, sess=sess, queue_data_placeholder=input_placeholder,
+		# 					   queue_target_placeholder=target_placeholder, dtypes=[data_dtype, target_dtype],
+		# 					   shapes=[data_shape[1:], target_shape[1:]], options=options)
+		# dataset = tf.contrib.data.Dataset.from_tensor_slices((input_placeholder, target_placeholder))
+		# self.iterator = dataset.make_initializable_iterator()
 
 	def set_dataset_indices(self, dataset_indices: DatasetIndices):
 		self.dataset_indices = dataset_indices
@@ -53,12 +56,18 @@ class Pipeline(InputPipeline):
 				video = tf.reshape(input_images, shape=[BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS])
 
 				while not self.coord.should_stop():
+					# TODO directly tie image processing to dataset
 					feed_input_indices, feed_targets = index_batch_generator.next()
 					input_batch, target_batch = sess.run([video, targets_normalized],
 														 feed_dict={input_indices: feed_input_indices,
 																	targets: feed_targets})
-					self.enqueue(sess=sess, curr_data=input_batch, curr_target=target_batch)
+					sess.run(self.iterator,
+							 feed_dict={self.input_placeholder: input_batch, self.target_batch: target_batch})
+					# self.enqueue(sess=sess, curr_data=input_batch, curr_target=target_batch)
 					print("Enqueued batch")
 
 	def start_pipeline(self):
-		self.start_enqueue_thread(self.enqueue_callback)
+		# self.sess.run(self.queue.close(cancel_pending_enqueues=True), options=run_options)
+		self.enqueue_thread = threading.Thread(target=self.enqueue_callback, args=[self.sess])
+		self.enqueue_thread.isDaemon()
+		self.enqueue_thread.start()

@@ -1,55 +1,12 @@
-import os
-
 import numpy as np
-
-from manas.ai.planning.komanda.dataset import dataset
-from manas.ai.planning.komanda.dataset.dataset import DatasetType
-from manas.ai.planning.komanda.dataset.pipeline import Pipeline, InputPipelineOptions
-
-# define some constants
-
-# RNNs are typically trained using (truncated) backprop through time. SEQ_LEN here is the length of BPTT. 
-# Batch size specifies the number of sequence fragments used in a single optimization step.
-# (Actually we can use variable SEQ_LEN and BATCH_SIZE, they are set to constants only for simplicity).
-# LEFT_CONTEXT is the number of extra frames from the past that we append to the left of our input sequence.
-# We need to do it because 3D convolution with "VALID" padding "eats" frames from the left, decreasing the sequence length.
-# One should be careful here to maintain the model's causality.
-SEQ_LEN = 10
-BATCH_SIZE = 5
-LEFT_CONTEXT = 5
-
-# These are the input image parameters.
-HEIGHT = 480
-WIDTH = 640
-CHANNELS = 3  # RGB
-
-# The parameters of the LSTM that keeps the model state.
-RNN_SIZE = 32
-RNN_PROJ = 32
-
-# Our training data follows the "interpolated.csv" format from Ross Wightman's scripts.
-CSV_HEADER = "index,timestamp,width,height,frame_id,filename,angle,torque,speed,lat,long,alt".split(",")
-OUTPUTS = CSV_HEADER[-6:-3]  # angle,torque,speed
-OUTPUT_DIM = len(OUTPUTS)  # predict all features: steering angle, torque and vehicle speed
-
-CHECKPOINT_DIR = os.environ['CHECKPOINTS'] + "/udacity_steering/challenge_2/v4"
-DATASET_DIR = os.environ['DATASETS'] + "/udacity_steering/challenge_2"
-
-pipelineOptions = InputPipelineOptions()
-pipelineOptions.batch_size = BATCH_SIZE
-pipelineOptions.enqueue_size = 1
-pipelineOptions.min_after_dequeue = 1
-
-dataset.DatasetIndices.load_default()
-train_seq, valid_seq, test_seq, mean, std = dataset.process_csv("interpolated.csv", DATASET_DIR + "/bag_extraction",
-																OUTPUT_DIM,
-																SEQ_LEN,
-																BATCH_SIZE,
-																val=5,
-																test=2)  # concatenated interpolated.csv from rosbags
-
 import tensorflow as tf
 from tensorflow.python.util import nest
+
+import manas.ai.planning.komanda.dataset.contrib_datasets as contrib_datasets
+from manas.ai.planning.komanda.dataset.dataset import DatasetType
+from manas.ai.planning.komanda.dataset.constant import *
+
+mean, std, train_set, valid_set, test_set = contrib_datasets.get_datasets()
 
 slim = tf.contrib.slim
 
@@ -140,20 +97,9 @@ with graph.as_default():
 	keep_prob = tf.placeholder_with_default(input=1.0, shape=())
 	aux_cost_weight = tf.placeholder_with_default(input=0.1, shape=())
 
-	inputs = tf.placeholder(shape=(BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN),
-							dtype=tf.string)  # pathes to png files from the central camera
-	targets = tf.placeholder(shape=(BATCH_SIZE, SEQ_LEN, OUTPUT_DIM),
-							 dtype=tf.float32)  # seq_len x batch_size x OUTPUT_DIM
-
-	input_images = tf.stack([tf.image.decode_png(tf.read_file(x)) for x in
-							 tf.unstack(tf.reshape(inputs, shape=[(LEFT_CONTEXT + SEQ_LEN) * BATCH_SIZE]))])
-
 	with tf.device('/gpu:0'):
-		targets_normalized = (targets - mean) / std
-
-		input_images = tf.cast(input_images, tf.float32) * 2.0 / 255.0 - 1.0
-		input_images.set_shape([(LEFT_CONTEXT + SEQ_LEN) * BATCH_SIZE, HEIGHT, WIDTH, CHANNELS])
-		video = tf.reshape(input_images, shape=[BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS])
+		targets_normalized = tf.placeholder(shape=(BATCH_SIZE, SEQ_LEN, OUTPUT_DIM), dtype=tf.float32)
+		video = tf.placeholder(shape=[BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS], dtype=tf.float32)
 		visual_conditions_reshaped = apply_vision_simple(video=video, keep_prob=keep_prob,
 														 batch_size=BATCH_SIZE, seq_len=SEQ_LEN)
 		visual_conditions = tf.reshape(visual_conditions_reshaped, [BATCH_SIZE, SEQ_LEN, -1])
@@ -226,17 +172,17 @@ with graph.as_default():
 		mse_gt_sqrt = tf.sqrt(mse_gt)
 		mse_autoregressive_sqrt = tf.sqrt(mse_autoregressive)
 
+	with tf.device('/cpu:0'):
 		tf.summary.scalar("MAIN TRAIN METRIC: rmse_autoregressive_steering", mse_autoregressive_steering_sqrt)
 		tf.summary.scalar("rmse_gt", mse_gt_sqrt)
 		tf.summary.scalar("rmse_autoregressive", mse_autoregressive_sqrt)
-
 		summaries = tf.summary.merge_all()
 		train_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/train_summary', graph=graph)
 		valid_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
 		test_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
 		saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
 
-gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=1.0)
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.95)
 
 global_train_step = 0
 global_valid_step = 0
@@ -245,27 +191,28 @@ global_test_step = 0
 KEEP_PROB_TRAIN = 0.25
 
 
-def do_epoch(graph, type: DatasetType):
-	global global_train_step, global_valid_step, test_valid_step
+def do_epoch(sess, type: DatasetType):
+	global global_train_step, global_valid_step, test_valid_step, test_set
 	test_predictions = {}
 	valid_predictions = {}
-	dataset_indices = dataset.DatasetIndices.DATASET_DICT[type]
-	# batch_generator = dataset.BatchGenerator(sequence=dataset_indices.sequence, seq_len=SEQ_LEN, batch_size=BATCH_SIZE,
-	# 										 left_context=LEFT_CONTEXT)
 
-	total_num_steps = int(1 + (len(dataset_indices.sequence) - 1) / BATCH_SIZE / SEQ_LEN)
+	epoch_dataset, dataset_count = {
+		DatasetType.TRAIN: (train_set, contrib_datasets.validation_batch_index),
+		DatasetType.VALIDATION: (valid_set, contrib_datasets.test_batch_index - contrib_datasets.validation_batch_index),
+		DatasetType.TEST: (test_set, contrib_datasets.total_batch_count - contrib_datasets.test_batch_index)
+	}[type]
+	with tf.Session():
+		with tf.device('/cpu:0'):
+			get_next_op = epoch_dataset.make_one_shot_iterator().get_next()
 	controller_final_state_gt_cur, controller_final_state_autoregressive_cur = None, None
 	acc_loss = np.float128(0.0)
-	with tf.device("/cpu:0"):
-		pipeline = Pipeline(graph=graph, sess=session, dataset_indices=dataset_indices,
-							options=pipelineOptions)
-		pipeline.start_pipeline()
-		input_batch, target_batch = pipeline.get_batches()
-	for step in range(5):
-		with tf.device("/cpu:0"):
-			print("Deque next batch")
-			curr_input_batch, curr_target_batch = session.run([input_batch, target_batch])
-		feed_dict = {video: curr_input_batch, targets_normalized: curr_target_batch}
+
+	for step in range(dataset_count):
+		print("Deque next batch")
+		with tf.Session() as sess:
+			with tf.device('/cpu:0'):
+				get_next = sess.run(get_next_op)
+		feed_dict = {video: get_next[0], targets_normalized: get_next[1]}
 		# feed_inputs, feed_targets = batch_generator.next()
 		if controller_final_state_autoregressive_cur is not None:
 			feed_dict.update({controller_initial_state_autoregressive: controller_final_state_autoregressive_cur})
@@ -299,15 +246,17 @@ def do_epoch(graph, type: DatasetType):
 							 controller_final_state_autoregressive],
 							feed_dict=feed_dict)
 			test_writer.add_summary(summary, global_test_step)
-			feed_inputs = curr_input_batch[:, LEFT_CONTEXT:].flatten()
-			model_predictions = model_predictions.flatten()
-			for i, img in enumerate(feed_inputs):
-				test_predictions[img] = model_predictions[i]
+			# TODO Print predictions along side image paths by including image paths in pipeline
+			# feed_inputs = get_next[:, LEFT_CONTEXT:].flatten()
+			# model_predictions = model_predictions.flatten()
+			# for i, img in enumerate(feed_inputs):
+			# 	test_predictions[img] = model_predictions[i]
+		else:
+			raise AttributeError('Unknown dataset type')
 		acc_loss += loss
-		print('\r', step + 1, "/", total_num_steps, np.sqrt(acc_loss / (step + 1)), )
-	with tf.device("/cpu:0"):
-		pipeline.close()
-	return (np.sqrt(acc_loss / total_num_steps), valid_predictions) if type != DatasetType.TEST \
+		print('\r', step + 1, "/", dataset_count, np.sqrt(acc_loss / (step + 1)), )
+
+	return (np.sqrt(acc_loss / dataset_count), valid_predictions) if type != DatasetType.TEST \
 		else (None, test_predictions)
 
 
@@ -315,10 +264,14 @@ NUM_EPOCHS = 100
 
 best_validation_score = None
 with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options,
-												   # log_device_placement=True,
+												   log_device_placement=True,
 												   allow_soft_placement=True)) as session:
-	with tf.device('/gpu:0'):
+	with tf.device('/cpu:0'):
 		session.run(tf.global_variables_initializer())
+
+	with tf.device('/gpu:0'):
+		# pipeline = Pipeline(graph, session, pipelineOptions)
+		# pipeline.start_pipeline()
 		print('Initialized')
 		ckpt = tf.train.latest_checkpoint(CHECKPOINT_DIR)
 		if ckpt and False:
@@ -328,7 +281,7 @@ with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options,
 			print("Starting epoch %d / %d" % (epoch, NUM_EPOCHS))
 
 			print("Validation:")
-			valid_score, valid_predictions = do_epoch(graph=graph, type=DatasetType.VALIDATION)
+			valid_score, valid_predictions = do_epoch(sess=session, type=DatasetType.VALIDATION)
 
 			if best_validation_score is None:
 				best_validation_score = valid_score
@@ -345,12 +298,12 @@ with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options,
 
 			if epoch != NUM_EPOCHS - 1:
 				print("Training")
-				do_epoch(graph=graph, type=DatasetType.TRAIN)
+				do_epoch(sess=session, type=DatasetType.TRAIN)
 
 			if epoch == NUM_EPOCHS - 1:
 				print("Test:")
 				with open(CHECKPOINT_DIR + "/test-predictions-epoch%d" % epoch, "w") as out:
-					_, test_predictions = do_epoch(graph=graph, type=DatasetType.TEST)
+					_, test_predictions = do_epoch(sess=session, type=DatasetType.TEST)
 					print("frame_id,steering_angle")
 					for img, pred in test_predictions.items():
 						img = img.replace("challenge_2/Test-final/center/", "")
