@@ -3,8 +3,6 @@ from enum import Enum
 
 import numpy as np
 
-import tensorflow as tf
-
 # define some constants
 
 # RNNs are typically trained using (truncated) backprop through time. SEQ_LEN here is the length of BPTT.
@@ -146,6 +144,11 @@ class DatasetIndices(object):
 							val=5,
 							test=2)  # concatenated interpolated.csv from rosbags
 
+
+class BatchContainer(object):
+	def __init__(self, dataset, count):
+		self.dataset = dataset
+		self.count = count
 
 # TODO Remove
 def read_csv(filename, dataset_dir):

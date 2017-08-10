@@ -2,11 +2,10 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.util import nest
 
-import manas.ai.planning.komanda.dataset.contrib_dataset as contrib_datasets
-from manas.ai.planning.komanda.dataset.dataset import DatasetType
+import manas.ai.planning.komanda.dataset.contrib_dataset as contrib_dataset
 from manas.ai.planning.komanda.dataset.constant import *
-
-mean, std, train_set, valid_set, test_set = contrib_datasets.get_datasets()
+from manas.ai.planning.komanda.dataset.dataset import DatasetType
+from manas.ai.planning.komanda.dataset.pipeline import Pipeline, PipelineOptions
 
 slim = tf.contrib.slim
 
@@ -89,7 +88,7 @@ class SamplingRNNCell(tf.nn.rnn_cell.RNNCell):
 		return new_output, (current_ground_truth if self._use_ground_truth else new_output, new_state_internal)
 
 
-graph = tf.Graph()
+graph = tf.get_default_graph()
 
 with graph.as_default():
 	# inputs
@@ -162,7 +161,7 @@ with graph.as_default():
 		mse_autoregressive = tf.reduce_mean(tf.squared_difference(out_autoregressive, targets_normalized))
 		mse_autoregressive_steering = tf.reduce_mean(
 			tf.squared_difference(out_autoregressive[:, :, 0], targets_normalized[:, :, 0]))
-		steering_predictions = (out_autoregressive[:, :, 0] * std[0]) + mean[0]
+		steering_predictions = (out_autoregressive[:, :, 0] * contrib_dataset.std[0]) + contrib_dataset.mean[0]
 
 		total_loss = mse_autoregressive_steering + aux_cost_weight * (mse_gt + mse_autoregressive)
 
@@ -182,7 +181,7 @@ with graph.as_default():
 		test_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
 		saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
 
-gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.95)
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.9)
 
 global_train_step = 0
 global_valid_step = 0
@@ -191,29 +190,30 @@ global_test_step = 0
 KEEP_PROB_TRAIN = 0.25
 
 
-def do_epoch(sess, type: DatasetType):
+def do_epoch(sess, pipelines, type: DatasetType):
 	global global_train_step, global_valid_step, test_valid_step, test_set
 	test_predictions = {}
 	valid_predictions = {}
 
-	epoch_dataset, dataset_count = {
-		DatasetType.TRAIN: (train_set, contrib_datasets.validation_batch_index),
-		DatasetType.VALIDATION: (valid_set, contrib_datasets.test_batch_index - contrib_datasets.validation_batch_index),
-		DatasetType.TEST: (test_set, contrib_datasets.total_batch_count - contrib_datasets.test_batch_index)
-	}[type]
-	with tf.Session():
-		with tf.device('/cpu:0'):
-			get_next_op = epoch_dataset.make_one_shot_iterator().get_next()
+	# pipeline = pipelines[type.value]
+	pipeline = pipelines[0]
+	batch_container = batch_containers[type.value]
+	# dataset = batch_container.dataset
+	batch_count = batch_container.count
+
+	# data_batch_op, target_batch_op = pipeline.get_batches()
 	controller_final_state_gt_cur, controller_final_state_autoregressive_cur = None, None
 	acc_loss = np.float128(0.0)
 
-	for step in range(dataset_count):
+	for step in range(batch_count):
 		print("Deque next batch")
-		with tf.Session() as sess:
-			with tf.device('/cpu:0'):
-				get_next = sess.run(get_next_op)
-		feed_dict = {video: get_next[0], targets_normalized: get_next[1]}
-		# feed_inputs, feed_targets = batch_generator.next()
+		batch = None
+		while batch is None:
+			if sess.run(pipeline.queue.size()) > 0:
+				batch = sess.run(pipeline.dequeue_op)
+			else:
+				print("pipeline empty!")
+		feed_dict = {video: batch[0], targets_normalized: batch[1]}
 		if controller_final_state_autoregressive_cur is not None:
 			feed_dict.update({controller_initial_state_autoregressive: controller_final_state_autoregressive_cur})
 		if controller_final_state_gt_cur is not None:
@@ -246,17 +246,17 @@ def do_epoch(sess, type: DatasetType):
 							 controller_final_state_autoregressive],
 							feed_dict=feed_dict)
 			test_writer.add_summary(summary, global_test_step)
-			# TODO Print predictions along side image paths by including image paths in pipeline
-			# feed_inputs = get_next[:, LEFT_CONTEXT:].flatten()
-			# model_predictions = model_predictions.flatten()
-			# for i, img in enumerate(feed_inputs):
-			# 	test_predictions[img] = model_predictions[i]
+		# TODO Print predictions along side image paths by including image paths in pipeline
+		# feed_inputs = get_next[:, LEFT_CONTEXT:].flatten()
+		# model_predictions = model_predictions.flatten()
+		# for i, img in enumerate(feed_inputs):
+		# 	test_predictions[img] = model_predictions[i]
 		else:
 			raise AttributeError('Unknown dataset type')
 		acc_loss += loss
-		print('\r', step + 1, "/", dataset_count, np.sqrt(acc_loss / (step + 1)), )
+		print('\r', step + 1, "/", batch_count, np.sqrt(acc_loss / (step + 1)), )
 
-	return (np.sqrt(acc_loss / dataset_count), valid_predictions) if type != DatasetType.TEST \
+	return (np.sqrt(acc_loss / batch_count), valid_predictions) if type != DatasetType.TEST \
 		else (None, test_predictions)
 
 
@@ -264,47 +264,58 @@ NUM_EPOCHS = 100
 
 best_validation_score = None
 with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options,
-												   log_device_placement=True,
+												   # log_device_placement=True,
 												   allow_soft_placement=True)) as session:
 	with tf.device('/cpu:0'):
 		session.run(tf.global_variables_initializer())
 
 	with tf.device('/gpu:0'):
-		# pipeline = Pipeline(graph, session, pipelineOptions)
-		# pipeline.start_pipeline()
 		print('Initialized')
 		ckpt = tf.train.latest_checkpoint(CHECKPOINT_DIR)
 		if ckpt and False:
 			print("Restoring from", ckpt)
 			saver.restore(sess=session, save_path=ckpt)
-		for epoch in range(NUM_EPOCHS):
-			print("Starting epoch %d / %d" % (epoch, NUM_EPOCHS))
 
-			print("Validation:")
-			valid_score, valid_predictions = do_epoch(sess=session, type=DatasetType.VALIDATION)
+	with tf.Session() as sess:
+		with tf.device('/cpu:0'):
+			mean, std, batch_containers = contrib_dataset.get_datasets()
+			pipelineOptions = PipelineOptions()
+			# pipelines = [Pipeline(graph, sess, batch_container, pipelineOptions) for batch_container in batch_containers]
+			# for pipeline in pipelines:
+			# 	pipeline.start_pipeline()
+			pipeline = Pipeline(graph, sess, batch_containers[DatasetType.TRAIN.value], pipelineOptions)
+			pipeline.start_pipeline()
 
-			if best_validation_score is None:
-				best_validation_score = valid_score
-			if valid_score < best_validation_score:
-				saver.save(session, CHECKPOINT_DIR + '/checkpoint-sdc-ch2')
-				best_validation_score = valid_score
-				print('\r', "SAVED at epoch %d" % epoch, )
-				with open(CHECKPOINT_DIR + "/valid-predictions-epoch%d" % epoch, "w") as out:
-					result = np.float128(0.0)
-					for img, stats in valid_predictions.items():
-						print(img, stats)
-						result += stats[-1]
-				print("Validation unnormalized RMSE:", np.sqrt(result / len(valid_predictions)))
+		with tf.device('/gpu:0'):
+			for epoch in range(NUM_EPOCHS):
+				print("Starting epoch %d / %d" % (epoch, NUM_EPOCHS))
 
-			if epoch != NUM_EPOCHS - 1:
-				print("Training")
-				do_epoch(sess=session, type=DatasetType.TRAIN)
+				print("Validation:")
+				valid_score, valid_predictions = do_epoch(sess=session, pipelines=[pipeline],
+														  type=DatasetType.VALIDATION)
 
-			if epoch == NUM_EPOCHS - 1:
-				print("Test:")
-				with open(CHECKPOINT_DIR + "/test-predictions-epoch%d" % epoch, "w") as out:
-					_, test_predictions = do_epoch(sess=session, type=DatasetType.TEST)
-					print("frame_id,steering_angle")
-					for img, pred in test_predictions.items():
-						img = img.replace("challenge_2/Test-final/center/", "")
-						print("%s,%f" % (img, pred))
+				if best_validation_score is None:
+					best_validation_score = valid_score
+				if valid_score < best_validation_score:
+					saver.save(session, CHECKPOINT_DIR + '/checkpoint-sdc-ch2')
+					best_validation_score = valid_score
+					print('\r', "SAVED at epoch %d" % epoch, )
+					with open(CHECKPOINT_DIR + "/valid-predictions-epoch%d" % epoch, "w") as out:
+						result = np.float128(0.0)
+						for img, stats in valid_predictions.items():
+							print(img, stats)
+							result += stats[-1]
+					print("Validation unnormalized RMSE:", np.sqrt(result / len(valid_predictions)))
+
+				if epoch != NUM_EPOCHS - 1:
+					print("Training")
+					do_epoch(sess=session, pipelines=[pipeline], type=DatasetType.TRAIN)
+
+				if epoch == NUM_EPOCHS - 1:
+					print("Test:")
+					with open(CHECKPOINT_DIR + "/test-predictions-epoch%d" % epoch, "w") as out:
+						_, test_predictions = do_epoch(sess=session, pipelines=[pipeline], type=DatasetType.TEST)
+						print("frame_id,steering_angle")
+						for img, pred in test_predictions.items():
+							img = img.replace("challenge_2/Test-final/center/", "")
+							print("%s,%f" % (img, pred))
