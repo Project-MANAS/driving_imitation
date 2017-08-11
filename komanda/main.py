@@ -9,8 +9,7 @@ from manas.ai.planning.komanda.dataset.pipeline import Pipeline, PipelineOptions
 
 slim = tf.contrib.slim
 
-with tf.device('/gpu:0'):
-	layer_norm = lambda x: tf.contrib.layers.layer_norm(inputs=x, center=True, scale=True, activation_fn=None,
+layer_norm = lambda x: tf.contrib.layers.layer_norm(inputs=x, center=True, scale=True, activation_fn=None,
 														trainable=True)
 
 
@@ -98,25 +97,24 @@ with graph.as_default():
 		keep_prob = tf.placeholder_with_default(input=1.0, shape=(), name="keep_prob")
 		aux_cost_weight = tf.placeholder_with_default(input=0.1, shape=(), name="aux_cost_weight")
 
-		with tf.device('/gpu:0'):
-			targets_normalized = tf.placeholder(shape=(BATCH_SIZE, SEQ_LEN, OUTPUT_DIM), dtype=tf.float32)
-			video = tf.placeholder(shape=[BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS],
-								   dtype=tf.float32,
-								   name="video_input")
-			visual_conditions_reshaped = apply_vision_simple(video=video, keep_prob=keep_prob,
-															 batch_size=BATCH_SIZE, seq_len=SEQ_LEN)
-			visual_conditions = tf.reshape(visual_conditions_reshaped, [BATCH_SIZE, SEQ_LEN, -1])
-			visual_conditions = tf.nn.dropout(x=visual_conditions, keep_prob=keep_prob)
+		targets_normalized = tf.placeholder(shape=(BATCH_SIZE, SEQ_LEN, OUTPUT_DIM), dtype=tf.float32)
+		video = tf.placeholder(shape=[BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS],
+							   dtype=tf.float32,
+							   name="video_input")
+		visual_conditions_reshaped = apply_vision_simple(video=video, keep_prob=keep_prob,
+														 batch_size=BATCH_SIZE, seq_len=SEQ_LEN)
+		visual_conditions = tf.reshape(visual_conditions_reshaped, [BATCH_SIZE, SEQ_LEN, -1])
+		visual_conditions = tf.nn.dropout(x=visual_conditions, keep_prob=keep_prob)
 
-			rnn_inputs_with_ground_truth = (visual_conditions, targets_normalized)
-			rnn_inputs_autoregressive = (
-				visual_conditions, tf.zeros(shape=(BATCH_SIZE, SEQ_LEN, OUTPUT_DIM), dtype=tf.float32))
+		rnn_inputs_with_ground_truth = (visual_conditions, targets_normalized)
+		rnn_inputs_autoregressive = (
+			visual_conditions, tf.zeros(shape=(BATCH_SIZE, SEQ_LEN, OUTPUT_DIM), dtype=tf.float32))
 
-			internal_cell = tf.nn.rnn_cell.LSTMCell(num_units=RNN_SIZE, num_proj=RNN_PROJ)
-			cell_with_ground_truth = SamplingRNNCell(num_outputs=OUTPUT_DIM, use_ground_truth=True,
-													 internal_cell=internal_cell)
-			cell_autoregressive = SamplingRNNCell(num_outputs=OUTPUT_DIM, use_ground_truth=False,
-												  internal_cell=internal_cell)
+		internal_cell = tf.nn.rnn_cell.LSTMCell(num_units=RNN_SIZE, num_proj=RNN_PROJ)
+		cell_with_ground_truth = SamplingRNNCell(num_outputs=OUTPUT_DIM, use_ground_truth=True,
+												 internal_cell=internal_cell)
+		cell_autoregressive = SamplingRNNCell(num_outputs=OUTPUT_DIM, use_ground_truth=False,
+											  internal_cell=internal_cell)
 
 
 		def get_initial_state(complex_state_tuple_sizes):
@@ -138,10 +136,9 @@ with graph.as_default():
 			return deep_copy
 
 
-		with tf.device('/gpu:0'):
-			controller_initial_state_variables = get_initial_state(cell_autoregressive.state_size)
-			controller_initial_state_autoregressive = deep_copy_initial_state(controller_initial_state_variables)
-			controller_initial_state_gt = deep_copy_initial_state(controller_initial_state_variables)
+		controller_initial_state_variables = get_initial_state(cell_autoregressive.state_size)
+		controller_initial_state_autoregressive = deep_copy_initial_state(controller_initial_state_variables)
+		controller_initial_state_gt = deep_copy_initial_state(controller_initial_state_variables)
 
 		with tf.variable_scope("predictor"):
 			out_gt, controller_final_state_gt = tf.nn.dynamic_rnn(cell=cell_with_ground_truth,
@@ -161,31 +158,29 @@ with graph.as_default():
 																						  swap_memory=True,
 																						  time_major=False)
 
-		with tf.device('/gpu:0'):
-			with tf.name_scope("regression"):
-				mse_gt = tf.reduce_mean(tf.squared_difference(out_gt, targets_normalized))
-				mse_autoregressive = tf.reduce_mean(tf.squared_difference(out_autoregressive, targets_normalized))
-				mse_autoregressive_steering = tf.reduce_mean(
-					tf.squared_difference(out_autoregressive[:, :, 0], targets_normalized[:, :, 0]))
-				steering_predictions = (out_autoregressive[:, :, 0] * contrib_dataset.std[0]) + contrib_dataset.mean[0]
+		with tf.name_scope("regression"):
+			mse_gt = tf.reduce_mean(tf.squared_difference(out_gt, targets_normalized))
+			mse_autoregressive = tf.reduce_mean(tf.squared_difference(out_autoregressive, targets_normalized))
+			mse_autoregressive_steering = tf.reduce_mean(
+				tf.squared_difference(out_autoregressive[:, :, 0], targets_normalized[:, :, 0]))
+			steering_predictions = (out_autoregressive[:, :, 0] * contrib_dataset.std[0]) + contrib_dataset.mean[0]
 
-				total_loss = mse_autoregressive_steering + aux_cost_weight * (mse_gt + mse_autoregressive)
+			total_loss = mse_autoregressive_steering + aux_cost_weight * (mse_gt + mse_autoregressive)
 
-				optimizer = get_optimizer(total_loss, learning_rate)
+			optimizer = get_optimizer(total_loss, learning_rate)
 
-				mse_autoregressive_steering_sqrt = tf.sqrt(mse_autoregressive_steering)
-				mse_gt_sqrt = tf.sqrt(mse_gt)
-				mse_autoregressive_sqrt = tf.sqrt(mse_autoregressive)
+			mse_autoregressive_steering_sqrt = tf.sqrt(mse_autoregressive_steering)
+			mse_gt_sqrt = tf.sqrt(mse_gt)
+			mse_autoregressive_sqrt = tf.sqrt(mse_autoregressive)
 
-		with tf.device('/cpu:0'):
-			tf.summary.scalar("MAIN TRAIN METRIC: rmse_autoregressive_steering", mse_autoregressive_steering_sqrt)
-			tf.summary.scalar("rmse_gt", mse_gt_sqrt)
-			tf.summary.scalar("rmse_autoregressive", mse_autoregressive_sqrt)
-			summaries = tf.summary.merge_all()
-			train_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/train_summary', graph=graph)
-			valid_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
-			test_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
-			saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
+		tf.summary.scalar("MAIN TRAIN METRIC: rmse_autoregressive_steering", mse_autoregressive_steering_sqrt)
+		tf.summary.scalar("rmse_gt", mse_gt_sqrt)
+		tf.summary.scalar("rmse_autoregressive", mse_autoregressive_sqrt)
+		summaries = tf.summary.merge_all()
+		train_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/train_summary', graph=graph)
+		valid_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
+		test_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
+		saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
 
 gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.9)
 
@@ -267,57 +262,53 @@ best_validation_score = None
 with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options,
 												   # log_device_placement=True,
 												   allow_soft_placement=True)) as session:
-	with tf.device('/cpu:0'):
-		session.run(tf.global_variables_initializer())
+	session.run(tf.global_variables_initializer())
 
-	with tf.device('/gpu:0'):
-		print('Initialized')
-		ckpt = tf.train.latest_checkpoint(CHECKPOINT_DIR)
-		if ckpt and False:
-			print("Restoring from", ckpt)
-			saver.restore(sess=session, save_path=ckpt)
+	print('Initialized')
+	ckpt = tf.train.latest_checkpoint(CHECKPOINT_DIR)
+	if ckpt and False:
+		print("Restoring from", ckpt)
+		saver.restore(sess=session, save_path=ckpt)
 
 	with tf.Session() as sess:
-		with tf.device('/cpu:0'):
-			with tf.name_scope("pipeline"):
-				mean, std, batch_containers = contrib_dataset.get_datasets()
-				pipelineOptions = PipelineOptions()
-				# pipelines = [Pipeline(graph, sess, batch_container, pipelineOptions) for batch_container in batch_containers]
-				# for pipeline in pipelines:
-				# 	pipeline.start_pipeline()
-				pipeline = Pipeline(graph, sess, batch_containers[DatasetType.TRAIN.value], pipelineOptions)
-				pipeline.start_pipeline()
+		with tf.name_scope("pipeline"):
+			mean, std, batch_containers = contrib_dataset.get_datasets()
+			pipelineOptions = PipelineOptions()
+			# pipelines = [Pipeline(graph, sess, batch_container, pipelineOptions) for batch_container in batch_containers]
+			# for pipeline in pipelines:
+			# 	pipeline.start_pipeline()
+			pipeline = Pipeline(graph, sess, batch_containers[DatasetType.TRAIN.value], pipelineOptions)
+			pipeline.start_pipeline()
 
-		with tf.device('/gpu:0'):
-			for epoch in range(NUM_EPOCHS):
-				print("Starting epoch %d / %d" % (epoch, NUM_EPOCHS))
+		for epoch in range(NUM_EPOCHS):
+			print("Starting epoch %d / %d" % (epoch, NUM_EPOCHS))
 
-				print("Validation:")
-				valid_score, valid_predictions = do_epoch(sess=sess, pipelines=[pipeline],
-														  type=DatasetType.VALIDATION)
+			print("Validation:")
+			valid_score, valid_predictions = do_epoch(sess=sess, pipelines=[pipeline],
+													  type=DatasetType.VALIDATION)
 
-				if best_validation_score is None:
-					best_validation_score = valid_score
-				if valid_score < best_validation_score:
-					saver.save(session, CHECKPOINT_DIR + '/checkpoint-sdc-ch2')
-					best_validation_score = valid_score
-					print('\r', "SAVED at epoch %d" % epoch, )
-					with open(CHECKPOINT_DIR + "/valid-predictions-epoch%d" % epoch, "w") as out:
-						result = np.float128(0.0)
-						for img, stats in valid_predictions.items():
-							print(img, stats)
-							result += stats[-1]
-					print("Validation unnormalized RMSE:", np.sqrt(result / len(valid_predictions)))
+			if best_validation_score is None:
+				best_validation_score = valid_score
+			if valid_score < best_validation_score:
+				saver.save(session, CHECKPOINT_DIR + '/checkpoint-sdc-ch2')
+				best_validation_score = valid_score
+				print('\r', "SAVED at epoch %d" % epoch, )
+				with open(CHECKPOINT_DIR + "/valid-predictions-epoch%d" % epoch, "w") as out:
+					result = np.float128(0.0)
+					for img, stats in valid_predictions.items():
+						print(img, stats)
+						result += stats[-1]
+				print("Validation unnormalized RMSE:", np.sqrt(result / len(valid_predictions)))
 
-				if epoch != NUM_EPOCHS - 1:
-					print("Training")
-					do_epoch(sess=sess, pipelines=[pipeline], type=DatasetType.TRAIN)
+			if epoch != NUM_EPOCHS - 1:
+				print("Training")
+				do_epoch(sess=sess, pipelines=[pipeline], type=DatasetType.TRAIN)
 
-				if epoch == NUM_EPOCHS - 1:
-					print("Test:")
-					with open(CHECKPOINT_DIR + "/test-predictions-epoch%d" % epoch, "w") as out:
-						_, test_predictions = do_epoch(sess=sess, pipelines=[pipeline], type=DatasetType.TEST)
-						print("frame_id,steering_angle")
-						for img, pred in test_predictions.items():
-							img = img.replace("challenge_2/Test-final/center/", "")
-							print("%s,%f" % (img, pred))
+			if epoch == NUM_EPOCHS - 1:
+				print("Test:")
+				with open(CHECKPOINT_DIR + "/test-predictions-epoch%d" % epoch, "w") as out:
+					_, test_predictions = do_epoch(sess=sess, pipelines=[pipeline], type=DatasetType.TEST)
+					print("frame_id,steering_angle")
+					for img, pred in test_predictions.items():
+						img = img.replace("challenge_2/Test-final/center/", "")
+						print("%s,%f" % (img, pred))
