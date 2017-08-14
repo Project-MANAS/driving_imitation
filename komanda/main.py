@@ -10,7 +10,7 @@ from manas.ai.planning.komanda.dataset.pipeline import Pipeline, PipelineOptions
 slim = tf.contrib.slim
 
 layer_norm = lambda x: tf.contrib.layers.layer_norm(inputs=x, center=True, scale=True, activation_fn=None,
-														trainable=True)
+													trainable=True)
 
 
 def get_optimizer(loss, lrate):
@@ -77,8 +77,8 @@ class SamplingRNNCell(tf.nn.rnn_cell.RNNCell):
 		(visual_feats, current_ground_truth) = inputs
 		prev_output, prev_state_internal = state
 		context = tf.concat([prev_output, visual_feats], 1)
-		new_output_internal, new_state_internal = internal_cell(context,
-																prev_state_internal)  # here the internal cell (e.g. LSTM) is called
+		new_output_internal, new_state_internal = self._internal_cell(context,
+																	  prev_state_internal)  # here the internal cell (e.g. LSTM) is called
 		new_output = tf.contrib.layers.fully_connected(
 			inputs=tf.concat([new_output_internal, prev_output, visual_feats], 1),
 			num_outputs=self._num_outputs,
@@ -206,9 +206,11 @@ def do_epoch(sess, pipelines, type: DatasetType):
 	controller_final_state_gt_cur, controller_final_state_autoregressive_cur = None, None
 	acc_loss = np.float128(0.0)
 
-	for step in range(batch_count):
-		print("Deque next batch")
+	# TODO Actual queue would be filled with less than batch_count * N_AUG because one of the threads do not augment
+	for step in range(batch_count * N_AUG):
+		print("Request dequeu")
 		batch = sess.run(pipeline.dequeue_op)
+		print("Deque satisfied")
 		feed_dict = {video: batch[0], targets_normalized: batch[1]}
 		if controller_final_state_autoregressive_cur is not None:
 			feed_dict.update({controller_initial_state_autoregressive: controller_final_state_autoregressive_cur})
@@ -250,7 +252,7 @@ def do_epoch(sess, pipelines, type: DatasetType):
 		else:
 			raise AttributeError('Unknown dataset type')
 		acc_loss += loss
-		print('\r', step + 1, "/", batch_count, np.sqrt(acc_loss / (step + 1)), )
+		print('\r', step + 1, "/", batch_count * N_AUG, np.sqrt(acc_loss / (step + 1)), )
 
 	return (np.sqrt(acc_loss / batch_count), valid_predictions) if type != DatasetType.TEST \
 		else (None, test_predictions)

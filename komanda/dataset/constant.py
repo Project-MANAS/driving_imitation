@@ -10,10 +10,12 @@ import os
 # One should be careful here to maintain the model's causality.
 
 SEQ_LEN = 10
-BATCH_SIZE = 5
 LEFT_CONTEXT = 5
+BATCH_SIZE = 12
 BUFFER_SIZE = 10
 N_CAMS = 3
+
+N_AUG = 10
 
 # These are the input image parameters.
 HEIGHT = 480

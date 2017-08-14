@@ -86,8 +86,8 @@ def get_datasets(filename=DATASET_DIR + "/bag_extraction/interpolated.csv"):
 				)
 			]
 		)
-		input_episode_images = tf.cast(input_episode_images_flat, tf.float32) * 2.0 / 255.0 - 1.0
-		input_episode = tf.reshape(input_episode_images,
+		# TODO Perform op at deque input_episode_images = tf.cast(input_episode_images_flat, tf.float32) * 2.0 / 255.0 - 1.0
+		input_episode = tf.reshape(input_episode_images_flat,
 								   shape=[BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS])
 		target_normalized = tf.reshape((target - mean) / std, [BATCH_SIZE, SEQ_LEN, OUTPUT_DIM])
 		return input_episode, target_normalized
