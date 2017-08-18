@@ -182,7 +182,7 @@ with graph.as_default():
 		test_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
 		saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
 
-gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.9)
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=1.0, allow_growth=True)
 
 global_train_step = 0
 global_valid_step = 0

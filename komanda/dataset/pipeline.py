@@ -10,7 +10,7 @@ class PipelineOptions(InputPipelineOptions):
 	def __init__(self):
 		super().__init__()
 		self.min_after_dequeue = 1
-		self.num_threads = 10
+		self.num_threads = 11
 		self.small_safety_margin = 0
 		self.batch_size = 1
 		self.enqueue_size = 0
@@ -94,10 +94,10 @@ class Pipeline(InputPipeline):
 					self.enqueue(sess=sess, curr_data=batch[0], curr_target=batch[1])
 				else:
 					batch_aug_gen = [self.generated_augmentations(sequence) for sequence in batch[0]]
-					for batch_index in range(len(batch[0])):
+					for batch_index in range(N_AUG):
 						augmented_batch = [next(sequence_aug_gen) for sequence_aug_gen in batch_aug_gen]
 						print('Enqueue thread %d: Produced augmented batch %d (Size now %d)'
-							  % (thread_index, batch_index, sess.run(self.queue.size())))
+							  % (thread_index, batch_index, sess.run(self.queue_size_op)))
 						self.enqueue(sess=sess, curr_data=augmented_batch, curr_target=batch[1])
 
 	def start_pipeline(self):
@@ -107,7 +107,7 @@ class Pipeline(InputPipeline):
 		assert len(sequence) % N_CAMS == 0
 		sequence_batch = np.split(sequence, len(sequence))
 
-		for i in range(N_AUG):
+		while True:
 			augmented_enumeration = self.seq.augment_batches(sequence_batch)
 			# sequence_enumerations[i] = [self.seq.augment_image(image) for image in sequence_enumerations[i]]
 			# augmented_enumerations.append([self.seq.augment_image(image) for image in sequence])
