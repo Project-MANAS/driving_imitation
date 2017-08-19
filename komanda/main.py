@@ -182,8 +182,6 @@ with graph.as_default():
 		test_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
 		saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
 
-gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.95, allow_growth=True)
-
 global_train_step = 0
 global_valid_step = 0
 global_test_step = 0
@@ -209,7 +207,7 @@ def do_epoch(sess, pipeline, type: DatasetType):
 	# TODO Find more elegant way to get size of dataset (batch_containers should be abstracted away since only the pipeline should interact with it directly)
 	# TODO Actual queue would be filled with less than batch_count * N_AUG if one of the threads do not augment (Solved by issue above)
 	for step in range(batch_count * N_AUG):
-		print("Request dequeu")
+		print("Request deque")
 		batch = sess.run(pipeline.dequeue_op)
 		print("Deque satisfied")
 		feed_dict = {video: batch[0], targets_normalized: batch[1]}
@@ -261,6 +259,8 @@ def do_epoch(sess, pipeline, type: DatasetType):
 
 
 NUM_EPOCHS = 100
+
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.95, allow_growth=True)
 
 best_validation_score = None
 with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options,

@@ -3,6 +3,7 @@ import tensorflow as tf
 from imgaug import augmenters as iaa
 
 from manas.ai.dataset.input_pipeline import InputPipeline, InputPipelineOptions
+from manas.ai.planning.komanda.dataset.contrib_dataset import BatchContainer
 from manas.ai.planning.komanda.dataset.dataset import *
 
 
@@ -10,7 +11,7 @@ class PipelineOptions(InputPipelineOptions):
 	def __init__(self):
 		super().__init__()
 		self.min_after_dequeue = 1
-		self.num_threads = 11
+		self.num_threads = 14
 		self.small_safety_margin = 0
 		self.batch_size = 1
 		self.enqueue_size = 0
@@ -32,7 +33,7 @@ class Pipeline(InputPipeline):
 		self.batch_count = batch_container.count
 		self._next_op = batch_container.dataset.make_one_shot_iterator().get_next()
 
-		sometimes = lambda aug: iaa.Sometimes(p=0.5, then_list=aug, deterministic=True, random_state=0)
+		sometimes = lambda aug: iaa.Sometimes(p=0.4, then_list=aug, deterministic=True, random_state=0)
 		self.seq = iaa.Sequential(
 			[
 				sometimes(
@@ -46,7 +47,7 @@ class Pipeline(InputPipeline):
 							   order=[0, 1],
 							   cval=(0.01, 1.0), deterministic=True, random_state=0)
 				),
-				iaa.SomeOf((1, 4),
+				iaa.SomeOf((0, 2),
 						   [
 							   sometimes(
 								   iaa.Superpixels(p_replace=(0.0001, 0.02), n_segments=(20, 40),
@@ -110,6 +111,7 @@ class Pipeline(InputPipeline):
 
 		while True:
 			augmented_enumeration = self.seq.augment_batches(sequence_batch)
+			# augmented_enumeration = sequence_batch
 			# sequence_enumerations[i] = [self.seq.augment_image(image) for image in sequence_enumerations[i]]
 			# augmented_enumerations.append([self.seq.augment_image(image) for image in sequence])
 			self.seq.reseed(deterministic_too=True)

@@ -2,8 +2,13 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.data import Dataset
 
-from manas.ai.planning.komanda.dataset.dataset import BatchContainer
 from .constant import *
+
+
+class BatchContainer(object):
+	def __init__(self, dataset, count):
+		self.dataset = dataset
+		self.count = count
 
 
 def read_csv(filename):
@@ -40,26 +45,6 @@ def process_csv(filename):
 															 range(0, len(sequence) - seq_size, N_CAMS)])
 	input_sequences = overlap_sequences(inputs, LEFT_CONTEXT + SEQ_LEN)
 	target_sequences = overlap_sequences(targets, SEQ_LEN)
-
-	# fused_dataset = np.array([[np.reshape(inputs[i:i + LEFT_CONTEXT + SEQ_LEN], [-1, 1]), targets[i:i + LEFT_CONTEXT + SEQ_LEN]] for i in
-	# 						  range(0, len(inputs) - (LEFT_CONTEXT + SEQ_LEN), N_CAMS)])
-
-	# cnt = 0
-	# for (input, target) in zip(inputs, targets):
-	# 	if cnt < SEQ_LEN * BATCH_SIZE * (100 - val):
-	# 		train_seq.append(ln)
-	# 		sum_f += ln[1]
-	# 		sum_sq_f += ln[1] * ln[1]
-	# 	else:
-	# 		valid_seq.append(ln)
-	# 	cnt += 1
-	# 	cnt %= SEQ_LEN * BATCH_SIZE * 100
-	# mean = sum_f / len(train_seq)
-	# var = sum_sq_f / len(train_seq) - mean * mean
-	# std = np.sqrt(var)
-	# # print(len(train_seq), len(valid_seq))
-	# # print(mean, std)  # we will need these statistics to normalize the outputs (and ground truth inputs)
-	# return train_seq, valid_seq, mean, std
 
 	return mean, std, input_sequences, target_sequences
 
@@ -107,18 +92,3 @@ def get_datasets(filename=DATASET_DIR + "/bag_extraction/interpolated.csv"):
 	return mean, std, [BatchContainer(train_dataset, validation_batch_index),
 					   BatchContainer(validation_dataset, test_batch_index),
 					   BatchContainer(test_dataset, total_batch_count)]
-
-# with tf.Session() as sess:
-# 	_, _, _, dataset, _ = get_datasets()
-# 	get_next = dataset.make_one_shot_iterator().get_next()
-# 	for i in range(10000):
-# 		next = sess.run([get_next])
-# 		print(i)
-
-# train_dataset, validation_dataset, test_dataset = (
-# 	Dataset.from_tensor_slices((seq_pair[0], seq_pair[1])).batch(BATCH_SIZE).shuffle(BUFFER_SIZE)
-# 	for seq_pair in
-# 	zip(np.split(input_sequences, [validation_index, test_index]),
-# 		np.split(target_sequences, [validation_index, test_index])))
-
-# print(train_dataset)
