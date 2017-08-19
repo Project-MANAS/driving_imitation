@@ -182,7 +182,7 @@ with graph.as_default():
 		test_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=graph)
 		saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
 
-gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=1.0, allow_growth=True)
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.95, allow_growth=True)
 
 global_train_step = 0
 global_valid_step = 0
@@ -191,13 +191,13 @@ global_test_step = 0
 KEEP_PROB_TRAIN = 0.25
 
 
-def do_epoch(sess, pipelines, type: DatasetType):
+def do_epoch(sess, pipeline, type: DatasetType):
 	global global_train_step, global_valid_step, test_valid_step, test_set
 	test_predictions = {}
 	valid_predictions = {}
 
+	# TODO Stop the enqueue threads and flush the pipeline here before restarting the enqueue threads with the new dataset before each epoch
 	# pipeline = pipelines[type.value]
-	pipeline = pipelines[0]
 	batch_container = batch_containers[type.value]
 	# dataset = batch_container.dataset
 	batch_count = batch_container.count
@@ -206,7 +206,8 @@ def do_epoch(sess, pipelines, type: DatasetType):
 	controller_final_state_gt_cur, controller_final_state_autoregressive_cur = None, None
 	acc_loss = np.float128(0.0)
 
-	# TODO Actual queue would be filled with less than batch_count * N_AUG because one of the threads do not augment
+	# TODO Find more elegant way to get size of dataset (batch_containers should be abstracted away since only the pipeline should interact with it directly)
+	# TODO Actual queue would be filled with less than batch_count * N_AUG if one of the threads do not augment (Solved by issue above)
 	for step in range(batch_count * N_AUG):
 		print("Request dequeu")
 		batch = sess.run(pipeline.dequeue_op)
@@ -218,6 +219,7 @@ def do_epoch(sess, pipelines, type: DatasetType):
 			feed_dict.update({controller_final_state_gt: controller_final_state_gt_cur})
 		if type == DatasetType.TRAIN:
 			feed_dict.update({keep_prob: KEEP_PROB_TRAIN})
+			# TODO Find way to increase GPU utilization by optimizing network
 			summary, _, loss, controller_final_state_gt_cur, controller_final_state_autoregressive_cur = \
 				session.run([summaries, optimizer, mse_autoregressive_steering, controller_final_state_gt,
 							 controller_final_state_autoregressive],
@@ -276,17 +278,16 @@ with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options,
 		with tf.name_scope("pipeline"):
 			mean, std, batch_containers = contrib_dataset.get_datasets()
 			pipelineOptions = PipelineOptions()
-			# pipelines = [Pipeline(graph, sess, batch_container, pipelineOptions) for batch_container in batch_containers]
-			# for pipeline in pipelines:
-			# 	pipeline.start_pipeline()
+			# TODO Batch container should be set instead of passed to constructor to allow dataset to be changed at runtime
 			pipeline = Pipeline(graph, sess, batch_containers[DatasetType.TRAIN.value], pipelineOptions)
+			# TODO Pipeline only needs to be started within do_epoch
 			pipeline.start_pipeline()
 
 		for epoch in range(NUM_EPOCHS):
 			print("Starting epoch %d / %d" % (epoch, NUM_EPOCHS))
 
 			print("Validation:")
-			valid_score, valid_predictions = do_epoch(sess=sess, pipelines=[pipeline],
+			valid_score, valid_predictions = do_epoch(sess=sess, pipeline=pipeline,
 													  type=DatasetType.VALIDATION)
 
 			if best_validation_score is None:
@@ -304,12 +305,12 @@ with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options,
 
 			if epoch != NUM_EPOCHS - 1:
 				print("Training")
-				do_epoch(sess=sess, pipelines=[pipeline], type=DatasetType.TRAIN)
+				do_epoch(sess=sess, pipeline=pipeline, type=DatasetType.TRAIN)
 
 			if epoch == NUM_EPOCHS - 1:
 				print("Test:")
 				with open(CHECKPOINT_DIR + "/test-predictions-epoch%d" % epoch, "w") as out:
-					_, test_predictions = do_epoch(sess=sess, pipelines=[pipeline], type=DatasetType.TEST)
+					_, test_predictions = do_epoch(sess=sess, pipeline=pipeline, type=DatasetType.TEST)
 					print("frame_id,steering_angle")
 					for img, pred in test_predictions.items():
 						img = img.replace("challenge_2/Test-final/center/", "")

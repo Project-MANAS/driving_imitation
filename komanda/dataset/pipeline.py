@@ -86,11 +86,12 @@ class Pipeline(InputPipeline):
 
 	def enqueue_callback(self, sess, thread_index):
 		print('Enqueue thread %d: Initiated' % thread_index)
-		while not self.coord.should_stop():
+		while not self.coord.should_stop():  # TODO Loop only as long as session is open
 			with tf.name_scope("pipeline_enqueue_%d" % thread_index):
 				print('Enqueue thread %d: Batch fetched' % thread_index)
 				batch = sess.run(self._next_op)
-				if thread_index == 1 and False:
+				# One thread does not augment to prevent any CPU augmentation bottlenecks
+				if thread_index == 1:
 					self.enqueue(sess=sess, curr_data=batch[0], curr_target=batch[1])
 				else:
 					batch_aug_gen = [self.generated_augmentations(sequence) for sequence in batch[0]]
