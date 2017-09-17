@@ -1,4 +1,5 @@
 import os
+import subprocess
 
 # define some constants
 
@@ -31,8 +32,14 @@ CSV_HEADER = "index,timestamp,width,height,frame_id,filename,angle,torque,speed,
 OUTPUTS = CSV_HEADER[-6:-3]  # angle,torque,speed
 OUTPUT_DIM = len(OUTPUTS)  # predict all features: steering angle, torque and vehicle speed
 
-CHECKPOINT_DIR = os.environ['CHECKPOINTS'] + "/udacity_steering/challenge_2/v4"
-DATASET_DIR = os.environ['DATASETS'] + "/udacity_steering/challenge_2"
-
+if os.environ.get('CHEKPOINTS', False) and os.environ.get('DATASETS', False):
+	CHECKPOINT_DIR = os.environ['CHECKPOINTS'] + "/udacity_steering/challenge_2/v4"
+	DATASET_DIR = os.environ['DATASETS'] + "/udacity_steering/challenge_2"
+else:
+	print('Datasets and Checkpoints directory not in os.environ. Temporarily hard coding path')
+	username = subprocess.check_output(['bash', '-c', 'whoami'])
+	username = str(username.strip())[2:-1]
+	CHECKPOINT_DIR = '/media/' + username + '/7B3A33754CA4427C/checkpoints/udacity_steering/challenge_2/v4'
+	DATASET_DIR = '/media/' + username + '/7B3A33754CA4427C/datasets/udacity_steering/challenge_2'
 validation_fraction = 0.001
 test_fraction = 0.001

@@ -33,7 +33,7 @@ class Pipeline(InputPipeline):
 		self.batch_count = batch_container.count
 		self._next_op = batch_container.dataset.make_one_shot_iterator().get_next()
 
-		sometimes = lambda aug: iaa.Sometimes(p=0.4, then_list=aug, deterministic=True, random_state=0)
+		sometimes = lambda aug: iaa.Sometimes(p=0.5, then_list=aug, deterministic=True, random_state=0)
 		self.seq = iaa.Sequential(
 			[
 				sometimes(
@@ -47,7 +47,7 @@ class Pipeline(InputPipeline):
 							   order=[0, 1],
 							   cval=(0.01, 1.0), deterministic=True, random_state=0)
 				),
-				iaa.SomeOf((0, 2),
+				iaa.SomeOf((0, 4),
 						   [
 							   sometimes(
 								   iaa.Superpixels(p_replace=(0.0001, 0.02), n_segments=(20, 40),
