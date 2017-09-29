@@ -12,9 +12,10 @@ import subprocess
 
 SEQ_LEN = 10
 LEFT_CONTEXT = 5
-BATCH_SIZE = 2
+BATCH_SIZE = 4
 BUFFER_SIZE = 10
 N_CAMS = 3
+N_THREADS = 8
 
 N_AUG = 10
 

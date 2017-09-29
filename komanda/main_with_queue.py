@@ -2,7 +2,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.framework.errors_impl import OutOfRangeError
 
-from manas.ai.dataset.queue import HomoThreadHeteroQueue, TfFIFOQueue, HeteroThreadHeteroQueue
+from manas.ai.dataset.queue import HeteroThreadHeteroQueue, HomoThreadMonoQueue, \
+	StagingAreaQueue
 from manas.ai.planning.komanda import model
 from manas.ai.planning.komanda.dataset import contrib_dataset
 from manas.ai.planning.komanda.dataset.constant import *
@@ -30,18 +31,18 @@ global_test_step = 0
 KEEP_PROB_TRAIN = 0.25
 
 
-def on_build_callback(thread_index, mqueue, placeholders, sess, batch_containers: BatchContainers):
-	enqueue_input = mqueue.queues[0].enqueue(placeholders)
-	return mqueue, enqueue_input, sess, batch_containers
+def on_build_callback(thread_index, mqueue, queues, placeholders, sess, batch_containers: BatchContainers):
+	enqueue_input = queues[0].enqueue(placeholders)
+	return enqueue_input, sess, batch_containers
 
 
 def on_start_callback(thread_index, thread_handler: HeteroThreadHeteroQueue.ThreadHandler,
-					  mqueue: HomoThreadHeteroQueue, enqueue_input, sess,
+					  enqueue_input, sess,
 					  batch_containers: BatchContainers):
 	batch_container = batch_containers.curr_batch_container
 	with sess.as_default():
 		sess.run(batch_container.initialize_iterator)
-		while not mqueue.coord.should_stop():
+		while not thread_handler.should_stop():
 			try:
 				batch = sess.run(batch_container.get_next)
 				print("Batch fetched %d" % thread_index)
@@ -53,33 +54,16 @@ def on_start_callback(thread_index, thread_handler: HeteroThreadHeteroQueue.Thre
 
 
 def build_datapipe(capacity, sess, batch_containers: BatchContainers):
-	input_queue = HomoThreadHeteroQueue([], 0, sess,
-										(on_build_callback, on_start_callback),
-										None, (video, targets_normalized))
-	input_queue.add_queues([
-		TfFIFOQueue(
-			tf.FIFOQueue(capacity=capacity, shapes=[[BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS],
-													[BATCH_SIZE, SEQ_LEN, OUTPUT_DIM]],
-						 dtypes=[tf.float32, tf.float32]))  # Video
-
-	])
-	# input_queue.add_queues([
-	# 	StagingAreaQueue(
-	# 		tf.contrib.staging.StagingArea(capacity=capacity,shapes=[[BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS]],
-	# 									   dtypes=[tf.float32])),
-	# 	# Video
-	# 	StagingAreaQueue(
-	# 		tf.contrib.staging.StagingArea(capacity=capacity,shapes=[[BATCH_SIZE, SEQ_LEN, OUTPUT_DIM]],
-	# 									   dtypes=[tf.float32]))  # Normalized targets
-	# ])
-	placeholders = (video, targets_normalized)
 	batch_containers.build_graph()
-	input_queue.add_threads_from_callback((on_build_callback, on_start_callback),
-										  4, input_queue,
-										  placeholders, sess, batch_containers)
-
-	# input_queue.add_thread_from_callback((on_build_callback, on_start_callback),input_queue,(video,targets_normalized),sess,batch_container)
-	input_queue.set_session(sess)
+	placeholders = (video, targets_normalized)
+	input_queue = HomoThreadMonoQueue(
+		StagingAreaQueue(capacity=capacity, shapes=[[BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS],
+													[BATCH_SIZE, SEQ_LEN, OUTPUT_DIM]],
+						 dtypes=[tf.float32, tf.float32]),
+		N_THREADS, sess,
+		(on_build_callback, on_start_callback),
+		placeholders, sess, batch_containers
+	)
 	return input_queue
 
 
@@ -149,7 +133,7 @@ def do_epoch(sess, batch_containers: BatchContainers, type: DatasetType):
 
 
 NUM_EPOCHS = 100
-QUEUE_CAPACITY = 100
+QUEUE_CAPACITY = 12
 gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.95, allow_growth=True)
 
 best_validation_score = None
