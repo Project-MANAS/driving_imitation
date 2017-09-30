@@ -10,6 +10,28 @@ class BatchContainer(object):
 		self.dataset = dataset
 		self.count = count
 
+	def build_graph(self):
+		self.iterator = self.dataset.make_initializable_iterator()
+		self.initialize_iterator = self.iterator.initializer
+		self.get_next = self.iterator.get_next()
+
+
+class BatchContainers(object):
+	def __init__(self, batch_containers: [BatchContainer]):
+		self.batch_containers = batch_containers
+		self.curr_type = None
+
+	def __getitem__(self, item):
+		return self.batch_containers[item]
+
+	def build_graph(self):
+		for batch_container in self.batch_containers:
+			batch_container.build_graph()
+
+	@property
+	def curr_batch_container(self) -> BatchContainer:
+		return self[self.curr_type]
+
 
 def read_csv(filename):
 	with open(filename, 'r') as f:
@@ -89,6 +111,7 @@ def get_datasets(filename=DATASET_DIR + "/bag_extraction/interpolated.csv"):
 		index_to_data)
 	test_dataset = dataset(input_sequences, target_sequences).skip(test_batch_index).map(index_to_data)
 
-	return mean, std, [BatchContainer(train_dataset, validation_batch_index),
-					   BatchContainer(validation_dataset, test_batch_index),
-					   BatchContainer(test_dataset, total_batch_count)]
+	return mean, std, BatchContainers([BatchContainer(train_dataset, validation_batch_index),
+									   BatchContainer(validation_dataset, test_batch_index - validation_batch_index),
+									   BatchContainer(test_dataset,
+													  int((total_batch_count / BATCH_SIZE) - test_batch_index))])

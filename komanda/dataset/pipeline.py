@@ -89,7 +89,7 @@ class Pipeline(InputPipeline):
 		print('Enqueue thread %d: Initiated' % thread_index)
 		while not self.coord.should_stop():  # TODO Loop only as long as session is open
 			with tf.name_scope("pipeline_enqueue_%d" % thread_index):
-				print('Enqueue thread %d: Batch fetched' % thread_index)
+				print('Enqueue thread %d: Fetching batch' % thread_index)
 				batch = sess.run(self._next_op)
 				# One thread does not augment to prevent any CPU augmentation bottlenecks
 				if thread_index == 1:

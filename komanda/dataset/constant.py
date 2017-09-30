@@ -12,7 +12,7 @@ import subprocess
 
 SEQ_LEN = 10
 LEFT_CONTEXT = 5
-BATCH_SIZE = 10
+BATCH_SIZE = 2
 BUFFER_SIZE = 10
 N_CAMS = 3
 
@@ -41,5 +41,7 @@ else:
 	username = str(username.strip())[2:-1]
 	CHECKPOINT_DIR = '/media/' + username + '/7B3A33754CA4427C/checkpoints/udacity_steering/challenge_2/v4'
 	DATASET_DIR = '/media/' + username + '/7B3A33754CA4427C/datasets/udacity_steering/challenge_2'
+	print('CHECKPOINT_DIR :' + CHECKPOINT_DIR)
+	print('DATASET_DIR :' + DATASET_DIR)
 validation_fraction = 0.001
 test_fraction = 0.001
