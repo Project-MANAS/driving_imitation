@@ -1,1 +1,1 @@
-Model to imitate the driving of a human adapted from the work done by Komanda in the Udacity steering challenge.
+Models to imitate the driving of humans adapted from Udacity's Self Driving Car Challenge and NVIDIA's research.
