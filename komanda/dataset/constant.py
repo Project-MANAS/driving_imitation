@@ -28,6 +28,8 @@ CHANNELS = 3  # RGB
 RNN_SIZE = 32
 RNN_PROJ = 32
 
+DATASET_MAP_PARALLEL = 10
+NUM_EPOCHS = 100
 # Our training data follows the "interpolated.csv" format from Ross Wightman's scripts.
 CSV_HEADER = "index,timestamp,width,height,frame_id,filename,angle,torque,speed,lat,long,alt".split(",")
 OUTPUTS = CSV_HEADER[-6:-3]  # angle,torque,speed

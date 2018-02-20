@@ -1,189 +1,129 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.python.framework.errors_impl import OutOfRangeError
 
-from manas.ai.dataset.queue import HeteroThreadHeteroQueue, HomoThreadMonoQueue, \
-	StagingAreaQueue
-from manas.ai.planning.komanda import model
-from manas.ai.planning.komanda.dataset import contrib_dataset
+from manas.ai.planning.komanda import multi_gpu
 from manas.ai.planning.komanda.dataset.constant import *
-from manas.ai.planning.komanda.dataset.contrib_dataset import BatchContainers
+from manas.ai.planning.komanda.dataset.contrib_dataset import get_datasets
 from manas.ai.planning.komanda.dataset.dataset import DatasetType
+from manas.ai.planning.komanda.model import Komanda
 
-model_input, model_output, model_info, optimizer = model.get_model_params()  # Tf komanada model graph output operations
-targets_normalized, video, keep_prob = model_input
-mse_autoregressive_steering, controller_final_state_gt, controller_final_state_autoregressive, controller_initial_state_autoregressive, steering_predictions = model_output
-mse_autoregressive_steering_sqrt, mse_autoregressive_sqrt, mse_gt, mse_gt_sqrt = model_info
+iter_op, type_ops, mean, var = get_datasets()
 
-tf.summary.scalar("MAIN TRAIN METRIC: rmse_autoregressive_steering", mse_autoregressive_steering_sqrt)
-tf.summary.scalar("rmse_gt", mse_gt_sqrt)
-tf.summary.scalar("rmse_autoregressive", mse_autoregressive_sqrt)
+lr = tf.placeholder_with_default(1e-3, (), tf.float32)
+model = Komanda()
+optimizer = tf.train.AdamOptimizer(lr)
+train_op, summary_op, init_op = multi_gpu.train(model, optimizer, iter_op, 15.0)
+
+mse_ar_steering = model.output['mse_autoregressive_steering']
+final_state_gt = model.output['controller_final_state_gt']
+final_state_ar = model.output['controller_final_state_autoregressive']
+initial_state_ar = model.output['controller_initial_state_autoregressive']
+steering_predictions = model.output['steering_predictions']
+
+mse_ar_steering_sqrt = model.info['mse_autoregressive_steering_sqrt']
+mse_ar_sqrt = model.info['mse_autoregressive_sqrt']
+mse_gt = model.info['mse_ge']
+mse_gt_sqrt = model.info['mse_gt_sqrt']
+
+tf.summary.scalar('mse_autoregressive_steering_sqrt', mse_ar_steering_sqrt)
+tf.summary.scalar('mse_gt_sqrt', mse_gt_sqrt)
+tf.summary.scalar('mse_autoregressive_sqrt', mse_ar_sqrt)
+
 summaries = tf.summary.merge_all()
-train_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/train_summary', graph=model.graph)
-valid_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=model.graph)
-test_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph=model.graph)
-saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
+train_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/train_summary', graph = model.graph)
+valid_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph = model.graph)
+test_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph = model.graph)
+
+saver = tf.train.Saver(write_version = tf.train.SaverDef.V2)
 
 global_train_step = 0
 global_valid_step = 0
 global_test_step = 0
 
 KEEP_PROB_TRAIN = 0.25
+BATCH_COUNT = 12
 
 
-def on_build_callback(thread_index, mqueue, queues, placeholders, sess, batch_containers: BatchContainers):
-	enqueue_input = queues[0].enqueue(placeholders)
-	return enqueue_input, sess, batch_containers
+def do_epoch(sess, type: DatasetType, batch_count):
+	global global_train_step, global_valid_step, global_test_step
 
-
-def on_start_callback(thread_index, thread_handler: HeteroThreadHeteroQueue.ThreadHandler,
-					  enqueue_input, sess,
-					  batch_containers: BatchContainers):
-	batch_container = batch_containers.curr_batch_container
-	with sess.as_default():
-		sess.run(batch_container.initialize_iterator)
-		while not thread_handler.should_stop():
-			try:
-				batch = sess.run(batch_container.get_next)
-				print("Batch fetched %d" % thread_index)
-				videos, targets = batch[0], batch[1]
-				sess.run(enqueue_input, feed_dict={video: videos, targets_normalized: targets})
-			except OutOfRangeError:
-				print('Thread %d completed' % thread_index)
-				return
-
-
-def build_datapipe(capacity, sess, batch_containers: BatchContainers):
-	batch_containers.build_graph()
-	placeholders = (video, targets_normalized)
-	input_queue = HomoThreadMonoQueue(
-		StagingAreaQueue(capacity=capacity, shapes=[[BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS],
-													[BATCH_SIZE, SEQ_LEN, OUTPUT_DIM]],
-						 dtypes=[tf.float32, tf.float32]),
-		N_THREADS, sess,
-		(on_build_callback, on_start_callback),
-		placeholders, sess, batch_containers
-	)
-	return input_queue
-
-
-def do_epoch(sess, batch_containers: BatchContainers, type: DatasetType):
-	global global_train_step, global_valid_step, test_valid_step, test_set
-	valid_predictions = {}
-	test_predictions = {}
-
-	batch_containers.curr_type = type.value
-	input_queue.start()
-
-	batch_container = batch_containers.curr_batch_container
-	batch_count = batch_container.count
-	controller_final_state_gt_cur, controller_final_state_autoregressive_cur = None, None
+	state_gt_cur, state_ar_cur = None, None
 	acc_loss = np.float128(0.0)
-	get_batch_op = input_queue.queues[0].dequeue()
+
+	if type == DatasetType.TRAIN:
+		sess.run(type_ops['train'])
+	elif type == DatasetType.VALIDATION:
+		sess.run(type_ops['validation'])
+	elif type == DatasetType.TEST:
+		sess.run(type_ops['test'])
+
 	for step in range(batch_count):
-		print("Requesting Dequeue")
-		batch = sess.run(get_batch_op)
-		print("Dequeued successfully")
-		feed_dict = {video: batch[0], targets_normalized: batch[1]}
-		if controller_final_state_autoregressive_cur is not None:
-			feed_dict.update({controller_initial_state_autoregressive: controller_final_state_autoregressive_cur})
-		if controller_final_state_gt_cur is not None:
-			feed_dict.update({controller_final_state_gt: controller_final_state_gt_cur})
+		feed_dict = {}
+		ops_train = [summaries, train_op, mse_ar_steering, final_state_gt, final_state_ar]
+		ops_valid = [steering_predictions, summaries, mse_ar_steering, final_state_ar]
+		loss = 0.0
+
+		if state_ar_cur is not None:
+			feed_dict.update({initial_state_ar: state_ar_cur})
+		if state_gt_cur is not None:
+			feed_dict.update({final_state_gt: state_gt_cur})
+
 		if type == DatasetType.TRAIN:
-			feed_dict.update({keep_prob: KEEP_PROB_TRAIN})
-			# TODO Find way to increase GPU utilization by optimizing network
-			summary, _, loss, controller_final_state_gt_cur, controller_final_state_autoregressive_cur = \
-				session.run([summaries, optimizer, mse_autoregressive_steering, controller_final_state_gt,
-							 controller_final_state_autoregressive],
-							feed_dict=feed_dict)
+			feed_dict.update({model.keep_prob: KEEP_PROB_TRAIN})
+			summary, _, loss, state_gt_cur, state_ar_cur = session.run(ops_train, feed_dict = feed_dict)
 			train_writer.add_summary(summary, global_train_step)
 			global_train_step += 1
+
 		elif type == DatasetType.VALIDATION:
-			model_predictions, summary, loss, controller_final_state_autoregressive_cur = \
-				session.run([steering_predictions, summaries, mse_autoregressive_steering,
-							 controller_final_state_autoregressive],
-							feed_dict=feed_dict)
+			model_predictions, summary, loss, state_ar_cur = session.run(ops_valid, feed_dict = feed_dict)
 			valid_writer.add_summary(summary, global_valid_step)
 			global_valid_step += 1
-		# TODO Fix:
-		# steering_targets = curr_target_batch[:, :, 0].flatten()
-		# feed_inputs = curr_input_batch[:, LEFT_CONTEXT:].flatten()
-		# model_predictions = model_predictions.flatten()
-		# stats = np.stack([steering_targets, model_predictions, (steering_targets - model_predictions) ** 2])
-		# for i, img in enumerate(feed_inputs):
-		# 	valid_predictions[img] = stats[:, i]
+
 		elif type == DatasetType.TEST:
-			model_predictions, summary, loss, controller_final_state_autoregressive_cur = \
-				session.run([steering_predictions, summaries, mse_autoregressive_steering,
-							 controller_final_state_autoregressive],
-							feed_dict=feed_dict)
+			model_predictions, summary, loss, state_ar_cur = session.run(ops_valid, feed_dict = feed_dict)
 			test_writer.add_summary(summary, global_test_step)
-		# TODO Print predictions along side image paths by including image paths in pipeline
-		# feed_inputs = get_next[:, LEFT_CONTEXT:].flatten()
-		# model_predictions = model_predictions.flatten()
-		# for i, img in enumerate(feed_inputs):
-		# 	test_predictions[img] = model_predictions[i]
-		else:
-			raise AttributeError('Unknown dataset type')
+			global_test_step += 1
+
 		acc_loss += loss
-		print('\r', step + 1, "/", batch_count * N_AUG, np.sqrt(acc_loss / (step + 1)), )
-	input_queue.stop_all(queue_stop_mode='clear')
-	return (np.sqrt(acc_loss / batch_count), valid_predictions) if type != DatasetType.TEST else (
-		None, test_predictions)
+		print('Iter', step, '\t', loss)
+
+	avg_loss = acc_loss / batch_count
+	print('Average loss this epoch:', avg_loss)
+
+	return avg_loss
 
 
-NUM_EPOCHS = 100
-QUEUE_CAPACITY = 12
-gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.95, allow_growth=True)
-
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.95, allow_growth = True)
+config = tf.ConfigProto(gpu_options = gpu_options, log_device_place = True, allow_soft_placement = True)
 best_validation_score = None
-with tf.Session(graph=model.graph, config=tf.ConfigProto(gpu_options=gpu_options,
-														 # log_device_placement=True,
-														 allow_soft_placement=True)) as session:
-	session.run(tf.global_variables_initializer())
 
+with tf.Session(graph = model.graph, config = config) as session:
+	session.run(init_op)
 	print('Initialized')
+
 	ckpt = tf.train.latest_checkpoint(CHECKPOINT_DIR)
 	if ckpt and False:
 		print("Restoring from", ckpt)
-		saver.restore(sess=session, save_path=ckpt)
+		saver.restore(sess = session, save_path = ckpt)
 
-	with tf.Session() as sess:
-		with tf.name_scope("pipeline"):
-			mean, std, batch_containers = contrib_dataset.get_datasets()
-		with tf.name_scope("datapipe"):
-			input_queue = build_datapipe(QUEUE_CAPACITY, sess, batch_containers)
-		# TODO Batch container should be set instead of passed to constructor to allow dataset to be changed at runtime
+	for epoch in range(NUM_EPOCHS):
+		print("Starting epoch %d / %d" % (epoch, NUM_EPOCHS))
 
-		for epoch in range(NUM_EPOCHS):
-			print("Starting epoch %d / %d" % (epoch, NUM_EPOCHS))
+		print("Validation:")
+		valid_score = do_epoch(session, DatasetType.VALIDATION, 12)
 
-			print("Validation:")
-			valid_score, valid_predictions = do_epoch(sess=sess, batch_containers=batch_containers,
-													  type=DatasetType.VALIDATION)
+		if best_validation_score is None:
+			best_validation_score = valid_score
+		if valid_score < best_validation_score:
+			saver.save(session, CHECKPOINT_DIR + '/checkpoint-sdc-ch2')
+			best_validation_score = valid_score
+			print('\r', "SAVED at epoch %d" % epoch)
 
-			if best_validation_score is None:
-				best_validation_score = valid_score
-			if valid_score < best_validation_score:
-				saver.save(session, CHECKPOINT_DIR + '/checkpoint-sdc-ch2')
-				best_validation_score = valid_score
-				print('\r', "SAVED at epoch %d" % epoch, )
-				with open(CHECKPOINT_DIR + "/valid-predictions-epoch%d" % epoch, "w") as out:
-					result = np.float128(0.0)
-					for img, stats in valid_predictions.items():
-						print(img, stats)
-						result += stats[-1]
-				print("Validation unnormalized RMSE:", np.sqrt(result / len(valid_predictions)))
+		if epoch != NUM_EPOCHS - 1:
+			print("Training")
+			do_epoch(session, DatasetType.TRAIN, 12)
 
-			if epoch != NUM_EPOCHS - 1:
-				print("Training")
-				do_epoch(sess=sess, batch_containers=batch_containers, type=DatasetType.TRAIN)
-
-			if epoch == NUM_EPOCHS - 1:
-				print("Test:")
-				with open(CHECKPOINT_DIR + "/test-predictions-epoch%d" % epoch, "w") as out:
-					_, test_predictions = do_epoch(sess=sess, batch_containers=batch_containers, type=DatasetType.TEST)
-					print("frame_id,steering_angle")
-					for img, pred in test_predictions.items():
-						img = img.replace("challenge_2/Test-final/center/", "")
-						print("%s,%f" % (img, pred))
+		if epoch == NUM_EPOCHS - 1:
+			print("Test:")
+			test_score = do_epoch(session, DatasetType.TEST, 12)
+			print('Final test loss:', test_score)
