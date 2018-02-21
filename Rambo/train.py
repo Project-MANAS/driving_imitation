@@ -4,7 +4,7 @@ from random import shuffle, randint
 import tensorflow as tf
 import numpy as np
 from numpy.random import RandomState
-from keras.callbacks import ModelCheckpoint, TensorBoard
+from keras.callbacks import ModelCheckpoint, TensorBoard, EarlyStopping
 from keras.utils.training_utils import multi_gpu_model
 from keras.models import Model
 from model import Rambo
@@ -114,7 +114,8 @@ if __name__ == '__main__':
 	filepath = os.path.join(train_dir, "rambo-{epoch:02d}-{val_loss:.5f}.hdf5")
 	checkpoint = ModelCheckpoint(filepath, monitor='val_loss', verbose=1, save_best_only=True)
 	tensorboard = TensorBoard(log_dir=log_dir, histogram_freq=0, write_graph=True, write_images=False)
-	callbacks_list = [checkpoint, tensorboard]
+	earlystop = EarlyStopping(monitor='val_loss', patience=3, verbose=0)
+	callbacks_list = [earlystop, checkpoint, tensorboard]
 
 	iters_train = X_train.shape[0]
 	iters_train /= batch_size
