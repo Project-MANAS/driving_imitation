@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import tensorflow as tf
 
@@ -7,10 +9,12 @@ from manas.ai.planning.komanda.dataset.contrib_dataset import get_datasets
 from manas.ai.planning.komanda.dataset.dataset import DatasetType
 from manas.ai.planning.komanda.model import Komanda
 
-iter_op, type_ops, mean, var = get_datasets()
+iter_op, type_ops, mean, var, no_of_iters = get_datasets()
+
+print("Building network boi")
 
 lr = tf.placeholder_with_default(1e-3, (), tf.float32)
-model = Komanda()
+model = Komanda(mean, var)
 optimizer = tf.train.AdamOptimizer(lr)
 train_op, summary_op, init_op = multi_gpu.train(model, optimizer, iter_op, 15.0)
 
@@ -36,6 +40,8 @@ test_writer = tf.summary.FileWriter(CHECKPOINT_DIR + '/valid_summary', graph = m
 
 saver = tf.train.Saver(write_version = tf.train.SaverDef.V2)
 
+print("Built network boi")
+
 global_train_step = 0
 global_valid_step = 0
 global_test_step = 0
@@ -44,50 +50,42 @@ KEEP_PROB_TRAIN = 0.25
 BATCH_COUNT = 12
 
 
-def do_epoch(sess, type: DatasetType, batch_count):
+def do_epoch(sess, run_type: DatasetType):
 	global global_train_step, global_valid_step, global_test_step
 
 	state_gt_cur, state_ar_cur = None, None
 	acc_loss = np.float128(0.0)
 
-	if type == DatasetType.TRAIN:
-		sess.run(type_ops['train'])
-	elif type == DatasetType.VALIDATION:
-		sess.run(type_ops['validation'])
-	elif type == DatasetType.TEST:
-		sess.run(type_ops['test'])
-
-	for step in range(batch_count):
+	sess.run(type_ops[run_type])
+	ops_train = [summaries, train_op, mse_ar_steering, final_state_gt, final_state_ar]
+	ops_valid_test = [steering_predictions, summaries, mse_ar_steering, final_state_ar]
+	for step in range(no_of_iters[run_type]):
 		feed_dict = {}
-		ops_train = [summaries, train_op, mse_ar_steering, final_state_gt, final_state_ar]
-		ops_valid = [steering_predictions, summaries, mse_ar_steering, final_state_ar]
-		loss = 0.0
-
 		if state_ar_cur is not None:
 			feed_dict.update({initial_state_ar: state_ar_cur})
 		if state_gt_cur is not None:
 			feed_dict.update({final_state_gt: state_gt_cur})
 
-		if type == DatasetType.TRAIN:
+		if run_type == DatasetType.TRAIN:
 			feed_dict.update({model.keep_prob: KEEP_PROB_TRAIN})
 			summary, _, loss, state_gt_cur, state_ar_cur = session.run(ops_train, feed_dict = feed_dict)
 			train_writer.add_summary(summary, global_train_step)
 			global_train_step += 1
 
-		elif type == DatasetType.VALIDATION:
-			model_predictions, summary, loss, state_ar_cur = session.run(ops_valid, feed_dict = feed_dict)
-			valid_writer.add_summary(summary, global_valid_step)
-			global_valid_step += 1
+		else:
+			model_predictions, summary, loss, state_ar_cur = session.run(ops_valid_test, feed_dict = feed_dict)
 
-		elif type == DatasetType.TEST:
-			model_predictions, summary, loss, state_ar_cur = session.run(ops_valid, feed_dict = feed_dict)
-			test_writer.add_summary(summary, global_test_step)
-			global_test_step += 1
+			if run_type == DatasetType.TEST:
+				test_writer.add_summary(summary, global_test_step)
+				global_test_step += 1
+			else:
+				valid_writer.add_summary(summary, global_valid_step)
+				global_valid_step += 1
 
 		acc_loss += loss
 		print('Iter', step, '\t', loss)
 
-	avg_loss = acc_loss / batch_count
+	avg_loss = acc_loss / no_of_iters[run_type]
 	print('Average loss this epoch:', avg_loss)
 
 	return avg_loss
@@ -95,35 +93,28 @@ def do_epoch(sess, type: DatasetType, batch_count):
 
 gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.95, allow_growth = True)
 config = tf.ConfigProto(gpu_options = gpu_options, log_device_place = True, allow_soft_placement = True)
-best_validation_score = None
+best_validation_score = math.inf
 
 with tf.Session(graph = model.graph, config = config) as session:
 	session.run(init_op)
-	print('Initialized')
-
-	ckpt = tf.train.latest_checkpoint(CHECKPOINT_DIR)
-	if ckpt and False:
-		print("Restoring from", ckpt)
-		saver.restore(sess = session, save_path = ckpt)
+	print("All bois are initialized")
 
 	for epoch in range(NUM_EPOCHS):
 		print("Starting epoch %d / %d" % (epoch, NUM_EPOCHS))
 
-		print("Validation:")
-		valid_score = do_epoch(session, DatasetType.VALIDATION, 12)
+		valid_score = do_epoch(session, DatasetType.VALIDATION)
+		print("Validation score:", valid_score)
 
-		if best_validation_score is None:
-			best_validation_score = valid_score
 		if valid_score < best_validation_score:
-			saver.save(session, CHECKPOINT_DIR + '/checkpoint-sdc-ch2')
+			saver.save(session, CHECKPOINT_DIR + '/checkpoint')
 			best_validation_score = valid_score
-			print('\r', "SAVED at epoch %d" % epoch)
+			print("SAVED at epoch %d" % epoch)
 
 		if epoch != NUM_EPOCHS - 1:
-			print("Training")
-			do_epoch(session, DatasetType.TRAIN, 12)
+			print('Komanda boii is training')
+			do_epoch(session, DatasetType.TRAIN)
 
 		if epoch == NUM_EPOCHS - 1:
 			print("Test:")
-			test_score = do_epoch(session, DatasetType.TEST, 12)
+			test_score = do_epoch(session, DatasetType.TEST)
 			print('Final test loss:', test_score)

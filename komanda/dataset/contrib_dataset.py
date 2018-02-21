@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 
 from .constant import *
+from .dataset import DatasetType
 
 
 def read_csv(filename):
@@ -16,14 +17,7 @@ def read_csv(filename):
 		return inputs, targets
 
 
-# TODO Avoid reading csv file twice
-inputs, targets = read_csv(filename = DATASET_DIR + "/bag_extraction/interpolated.csv")
-mean = np.sum(targets, axis = 0) / len(targets)
-std = np.sqrt(np.sum(np.square(targets), axis = 0) / len(targets))
-
-
-def process_csv(filename):
-	global mean, std
+def process_csv(filename = INTERPOLATED_CSV_DIR + "/interpolated.csv"):
 	inputs, targets = read_csv(filename)
 
 	mean = np.sum(targets, axis = 0) / len(targets)
@@ -39,7 +33,7 @@ def process_csv(filename):
 
 
 def get_datasets(filename = DATASET_DIR + "/bag_extraction/interpolated.csv"):
-	print("Loading datasets")
+	print("Dataset boi is loading")
 
 	mean, std, input_sequences, target_sequences = process_csv(filename = filename)
 	# concatenated interpolated.csv from rosbags
@@ -52,7 +46,7 @@ def get_datasets(filename = DATASET_DIR + "/bag_extraction/interpolated.csv"):
 		input_episode_images_flat = tf.stack(
 			[
 				tf.image.decode_png(
-					tf.read_file(DATASET_DIR + "/bag_extraction/" + x))
+					tf.read_file(DATASET_DIR + "" + x))
 				for x in
 				tf.unstack(
 					tf.reshape(input_indices, shape = [BATCH_SIZE * (LEFT_CONTEXT + SEQ_LEN)])
@@ -73,22 +67,31 @@ def get_datasets(filename = DATASET_DIR + "/bag_extraction/interpolated.csv"):
 		return tf.data.Dataset().from_tensor_slices((input_seq, target_seq)).shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
 
 	train_dataset = make_dataset(input_sequences, target_sequences) \
-		.take(validation_batch_index) \
-		.map(index_to_data, DATASET_MAP_PARALLEL)
+		.take(validation_batch_index)\
+		.map(index_to_data, N_THREADS) \
+		.prefetch(BATCH_SIZE * 10)
 
 	validation_dataset = make_dataset(input_sequences, target_sequences) \
 		.skip(validation_batch_index) \
-		.take(test_batch_index - validation_batch_index) \
-		.map(index_to_data, DATASET_MAP_PARALLEL)
+		.take(test_batch_index - validation_batch_index)\
+		.map(index_to_data, N_THREADS) \
+		.prefetch(BATCH_SIZE * 10)
 
 	test_dataset = make_dataset(input_sequences, target_sequences) \
-		.skip(test_batch_index) \
-		.map(index_to_data, DATASET_MAP_PARALLEL)
+		.skip(test_batch_index)\
+		.map(index_to_data, N_THREADS) \
+		.prefetch(BATCH_SIZE * 10)
 
 	iterator = tf.data.Iterator.from_structure(train_dataset.output_types, train_dataset.output_shapes)
 
-	type_ops = {'train': iterator.make_initializer(train_dataset),
-	            'validation': iterator.make_initializer(validation_dataset),
-	            'test': iterator.make_initializer(test_dataset)}
+	type_ops = {DatasetType.TRAIN: iterator.make_initializer(train_dataset),
+	            DatasetType.VALIDATION: iterator.make_initializer(validation_dataset),
+	            DatasetType.TEST: iterator.make_initializer(test_dataset)}
 
-	return iterator, type_ops, mean, std
+	no_of_iters = total_batch_count // BATCH_SIZE
+	iter_size = {DatasetType.TRAIN: no_of_iters,
+	             DatasetType.VALIDATION: no_of_iters * validation_fraction,
+	             DatasetType.TEST: no_of_iters * test_fraction}
+
+	print("Dataset boi has finished loading")
+	return iterator, type_ops, mean, std, iter_size
