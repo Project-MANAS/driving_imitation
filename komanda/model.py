@@ -13,13 +13,14 @@ class Komanda:
 		self.var = dataset_variance
 		self.info = {}
 		self.output = {}
+		self.TOWER_NAME = "KomandaBoi"
 
 	@staticmethod
 	def swish(x):
 		return x * tf.nn.sigmoid(x)
 
 	def apply_vision_simple(self, video, keep_prob, batch_size, seq_len, scope = None, reuse = None):
-		with tf.variable_scope(scope, 'Vision', [video], reuse = reuse):
+		with tf.variable_scope('vision', reuse=tf.AUTO_REUSE):
 			with slim.arg_scope([slim.model_variable, slim.variable], device = '/cpu:0'):
 				net = slim.convolution(video, 64, [3, 12, 12], [1, 6, 6], "VALID", activation_fn = self.swish)
 				net = tf.nn.dropout(net, keep_prob)

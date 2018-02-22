@@ -7,7 +7,7 @@
 
 SEQ_LEN = 10
 LEFT_CONTEXT = 5
-BATCH_SIZE = 4
+BATCH_SIZE = 1
 BUFFER_SIZE = 10
 N_CAMS = 3
 N_THREADS = 8
@@ -26,10 +26,10 @@ OUTPUTS = CSV_HEADER[-6:-3]  # angle,torque,speed
 OUTPUT_DIM = len(OUTPUTS)  # predict all features: steering angle, torque and vehicle speed
 
 CHECKPOINT_DIR = '/tmp'
-DATASET_DIR = '/tmp'
-INTERPOLATED_CSV_DIR = '/tmp'
-print('CHECKPOINT_DIR :' + CHECKPOINT_DIR)
-print('DATASET_DIR :' + DATASET_DIR)
+DATASET_DIR = './dataset/'
+INTERPOLATED_CSV_DIR = './dataset/'
+print('CHECKPOINT_DIR :', CHECKPOINT_DIR)
+print('DATASET_DIR :', DATASET_DIR)
 
 validation_fraction = 0.001
 test_fraction = 0.001

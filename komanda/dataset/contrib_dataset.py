@@ -1,8 +1,8 @@
 import numpy as np
 import tensorflow as tf
 
-from .constant import *
-from .dataset import DatasetType
+from manas.ai.planning.komanda.dataset.constant import *
+from manas.ai.planning.komanda.dataset.dataset import DatasetType
 
 
 def read_csv(filename):
@@ -12,13 +12,16 @@ def read_csv(filename):
 		inputs = []
 		targets = []
 		for line in lines:
+			if 'center' not in line[0]:
+				continue
 			inputs.append(line[0])
 			targets.append([float(x) for x in line[1:]])
 		return inputs, targets
 
 
-def process_csv(filename = INTERPOLATED_CSV_DIR + "/interpolated.csv"):
+def process_csv(filename = INTERPOLATED_CSV_DIR + "interpolated.csv"):
 	inputs, targets = read_csv(filename)
+
 
 	mean = np.sum(targets, axis = 0) / len(targets)
 	std = np.sqrt(np.sum(np.square(targets), axis = 0) / len(targets))
@@ -29,10 +32,10 @@ def process_csv(filename = INTERPOLATED_CSV_DIR + "/interpolated.csv"):
 	input_sequences = overlap_sequences(inputs, LEFT_CONTEXT + SEQ_LEN)
 	target_sequences = overlap_sequences(targets, SEQ_LEN)
 
-	return mean, std, input_sequences, target_sequences
+	return mean[0], std[0], input_sequences, target_sequences
 
 
-def get_datasets(filename = DATASET_DIR + "/bag_extraction/interpolated.csv"):
+def get_datasets(filename = DATASET_DIR + "interpolated.csv"):
 	print("Dataset boi is loading")
 
 	mean, std, input_sequences, target_sequences = process_csv(filename = filename)
@@ -53,10 +56,13 @@ def get_datasets(filename = DATASET_DIR + "/bag_extraction/interpolated.csv"):
 				)
 			]
 		)
+		input_episode_images_flat = tf.cast(input_episode_images_flat, tf.float32)
 
 		input_episode = tf.reshape(input_episode_images_flat,
 		                           shape = [BATCH_SIZE, LEFT_CONTEXT + SEQ_LEN, HEIGHT, WIDTH, CHANNELS])
 		target_normalized = tf.reshape((target - mean) / std, [BATCH_SIZE, SEQ_LEN, OUTPUT_DIM])
+
+		target_normalized = tf.cast(target_normalized, tf.float32)
 		return input_episode, target_normalized
 
 	total_batch_count = len(input_sequences)
@@ -90,8 +96,8 @@ def get_datasets(filename = DATASET_DIR + "/bag_extraction/interpolated.csv"):
 
 	no_of_iters = total_batch_count // BATCH_SIZE
 	iter_size = {DatasetType.TRAIN: no_of_iters,
-	             DatasetType.VALIDATION: no_of_iters * validation_fraction,
-	             DatasetType.TEST: no_of_iters * test_fraction}
+	             DatasetType.VALIDATION: int(no_of_iters * validation_fraction),
+	             DatasetType.TEST: int(no_of_iters * test_fraction)}
 
 	print("Dataset boi has finished loading")
 	return iterator, type_ops, mean, std, iter_size

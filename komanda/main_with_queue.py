@@ -1,3 +1,6 @@
+import sys
+sys.path.insert(0, '/media/sarthakmittal/7B3A33754CA4427C/driving_imitation')
+
 import math
 
 import numpy as np
@@ -13,10 +16,10 @@ iter_op, type_ops, mean, var, no_of_iters = get_datasets()
 
 print("Building network boi")
 
-lr = tf.placeholder_with_default(1e-3, (), tf.float32)
+lr = tf.placeholder_with_default(tf.constant(1e-3, dtype=tf.float32), ())
 model = Komanda(mean, var)
 optimizer = tf.train.AdamOptimizer(lr)
-train_op, summary_op, init_op = multi_gpu.train(model, optimizer, iter_op, 15.0)
+train_op, summary_op, init_op = multi_gpu.train(model, optimizer, iter_op)
 
 mse_ar_steering = model.output['mse_autoregressive_steering']
 final_state_gt = model.output['controller_final_state_gt']
@@ -26,7 +29,7 @@ steering_predictions = model.output['steering_predictions']
 
 mse_ar_steering_sqrt = model.info['mse_autoregressive_steering_sqrt']
 mse_ar_sqrt = model.info['mse_autoregressive_sqrt']
-mse_gt = model.info['mse_ge']
+mse_gt = model.info['mse_gt']
 mse_gt_sqrt = model.info['mse_gt_sqrt']
 
 tf.summary.scalar('mse_autoregressive_steering_sqrt', mse_ar_steering_sqrt)
@@ -92,7 +95,7 @@ def do_epoch(sess, run_type: DatasetType):
 
 
 gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.95, allow_growth = True)
-config = tf.ConfigProto(gpu_options = gpu_options, log_device_place = True, allow_soft_placement = True)
+config = tf.ConfigProto(gpu_options = gpu_options, allow_soft_placement = True)
 best_validation_score = math.inf
 
 with tf.Session(graph = model.graph, config = config) as session:

@@ -59,9 +59,11 @@ def tower_loss(scope, model, iter_op):
 	Returns:
 	    Scalar op containing the total loss for a batch of data
 	"""
-
-	model.build(scope, *iter_op)
+	inputs = iter_op.get_next()
+	model.build(scope, *inputs)
 	losses = tf.get_collection('losses', scope)
+
+	print(losses)
 	total_loss = tf.add_n(losses, name = 'total_loss')
 
 	for l in losses + [total_loss]:
@@ -89,7 +91,9 @@ def average_gradients(tower_grads):
 		# Note that each grad_and_vars looks like the following:
 		#   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
 		grads = []
+		print(grad_and_vars)
 		for g, _ in grad_and_vars:
+
 			# Add 0 dimension to the gradients to represent the tower.
 			expanded_g = tf.expand_dims(g, 0)
 
@@ -111,7 +115,7 @@ def average_gradients(tower_grads):
 
 def train(model, optimizer, iter_op, clip_param = None):
 	"""Train CIFAR-10 for a number of steps."""
-	with tf.Graph().as_default(), tf.device('/cpu:0'):
+	with tf.get_default_graph().as_default(), tf.device('/cpu:0'):
 		# Create a variable to count the number of train() calls. This equals the
 		# number of batches processed * FLAGS.num_gpus.
 		global_step = tf.get_variable(
@@ -120,11 +124,11 @@ def train(model, optimizer, iter_op, clip_param = None):
 
 		tower_grads = []
 		summaries = None
-		with tf.variable_scope(tf.get_variable_scope()):
+		with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
 			for i in range(NUM_GPUS):
 				with tf.device('/gpu:%d' % i):
 					with tf.name_scope('%s_%d' % (model.TOWER_NAME, i)) as scope:
-						loss = tower_loss(scope, model, iter_op)
+						loss = tower_loss(scope[:-1], model, iter_op)
 
 						# Reuse variables for the next tower.
 						tf.get_variable_scope().reuse_variables()
