@@ -2,7 +2,7 @@
 # Batch size specifies the number of sequence fragments used in a sigle optimization step.
 # (Actually we can use variable SEQ_LEN and BATCH_SIZE, they are set to constants only for simplicity).
 # LEFT_CONTEXT is the number of extra frames from the past that we append to the left of our input sequence.
-# We need to do it because 3D convolution with "VALID" padding "eats" frames from the left, decreasing the sequence length.
+# We need to do it because 3D convolution with "VALID" padding "eats" frames from the left, decreasing the seq length.
 # One should be careful here to maintain the model's causality.
 
 SEQ_LEN = 10
@@ -26,8 +26,8 @@ OUTPUTS = CSV_HEADER[-6:-3]  # angle,torque,speed
 OUTPUT_DIM = len(OUTPUTS)  # predict all features: steering angle, torque and vehicle speed
 
 CHECKPOINT_DIR = '/tmp'
-DATASET_DIR = './dataset/'
-INTERPOLATED_CSV_DIR = './dataset/'
+DATASET_DIR = '~/Workspace/dataset/'
+INTERPOLATED_CSV_DIR = '~/Workspace/dataset/'
 print('CHECKPOINT_DIR :', CHECKPOINT_DIR)
 print('DATASET_DIR :', DATASET_DIR)
 

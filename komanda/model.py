@@ -2,7 +2,7 @@ import tensorflow as tf
 import tensorflow.contrib.slim as slim
 from tensorflow.python.util import nest
 
-from manas.ai.planning.komanda.dataset.constant import *
+from .dataset.constant import *
 
 
 class Komanda:
@@ -20,7 +20,7 @@ class Komanda:
 		return x * tf.nn.sigmoid(x)
 
 	def apply_vision_simple(self, video, keep_prob, batch_size, seq_len, scope = None, reuse = None):
-		with tf.variable_scope('vision', reuse=tf.AUTO_REUSE):
+		with tf.variable_scope('vision', reuse = tf.AUTO_REUSE):
 			with slim.arg_scope([slim.model_variable, slim.variable], device = '/cpu:0'):
 				net = slim.convolution(video, 64, [3, 12, 12], [1, 6, 6], "VALID", activation_fn = self.swish)
 				net = tf.nn.dropout(net, keep_prob)
@@ -56,7 +56,7 @@ class Komanda:
 	class SamplingRNNCell(tf.nn.rnn_cell.RNNCell):
 		"""Simple sampling RNN cell."""
 
-		def __init__(self, num_outputs, use_ground_truth, internal_cell):
+		def __init__(self, num_outputs, use_ground_truth, internal_cell, **kwargs):
 			"""
 			if use_ground_truth then don't sample
 			"""
@@ -82,7 +82,8 @@ class Komanda:
 				num_outputs = self._num_outputs,
 				activation_fn = None,
 				scope = "OutputProjection")
-			# if self._use_ground_truth == True, we pass the ground truth as the state; otherwise, we use the model's predictions
+			# if self._use_ground_truth == True, we pass the ground truth as the state
+			# otherwise, we use the model's predictions
 			return new_output, (current_ground_truth if self._use_ground_truth else new_output, new_state_internal)
 
 	graph = tf.get_default_graph()

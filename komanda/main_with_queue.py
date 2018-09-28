@@ -1,22 +1,18 @@
-import sys
-sys.path.insert(0, '/media/sarthakmittal/7B3A33754CA4427C/driving_imitation')
-
 import math
 
 import numpy as np
 import tensorflow as tf
 
-from manas.ai.planning.komanda import multi_gpu
-from manas.ai.planning.komanda.dataset.constant import *
-from manas.ai.planning.komanda.dataset.contrib_dataset import get_datasets
-from manas.ai.planning.komanda.dataset.dataset import DatasetType
-from manas.ai.planning.komanda.model import Komanda
+from . import multi_gpu
+from .dataset.constant import *
+from .dataset.dataset import get_datasets, DatasetType
+from .model import Komanda
 
 iter_op, type_ops, mean, var, no_of_iters = get_datasets()
 
 print("Building network boi")
 
-lr = tf.placeholder_with_default(tf.constant(1e-3, dtype=tf.float32), ())
+lr = tf.placeholder_with_default(tf.constant(1e-3, dtype = tf.float32), ())
 model = Komanda(mean, var)
 optimizer = tf.train.AdamOptimizer(lr)
 train_op, summary_op, init_op = multi_gpu.train(model, optimizer, iter_op)

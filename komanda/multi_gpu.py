@@ -18,11 +18,11 @@ How to build a model to take advantage of multi-GPUs:
 def variable_on_cpu(name, shape, initializer):
 	"""Helper to create a Variable stored on CPU memory.
 	Args:
-	  name: name of the variable
-	  shape: list of ints
-	  initializer: initializer for Variable
+		name: name of the variable
+		shape: list of ints
+		initializer: initializer for Variable
 	Returns:
-	  Variable Tensor
+		Variable Tensor
 	"""
 	with tf.device('/cpu:0'):
 		var = tf.get_variable(name, shape, initializer = initializer, dtype = tf.float32)
@@ -34,12 +34,11 @@ def variable_with_weight_decay(name, shape, lambda_reg = None):
 	Note that the Variable is initialized with Xavier/Glorot initialization.
 	A weight decay is added only if one is specified.
 	Args:
-	  name: name of the variable
-	  shape: list of ints
-	  lambda_reg: add L2Loss weight decay multiplied by this float. If None, weight
-		  decay is not added for this Variable.
+		name: name of the variable
+		shape: list of ints
+		lambda_reg: add L2Loss weight decay multiplied by this float. If None, weight decay is not added for this Variable.
 	Returns:
-	  Variable Tensor
+		Variable Tensor
 	"""
 	var = variable_on_cpu(name, shape, tf.glorot_normal_initializer())
 	if lambda_reg is not None:
@@ -52,12 +51,12 @@ def tower_loss(scope, model, iter_op):
 	"""Calculate the total loss on a single tower
 
 	Args:
-	    scope: unique prefix string identifying the CIFAR tower, e.g. 'tower_0'
-	    model: user definied Tensorflow network with a `build` method
-	    iter_op: Tensorflow.data.Iterator from your data.Dataset
+		scope: unique prefix string identifying the CIFAR tower, e.g. 'tower_0'
+		model: user definied Tensorflow network with a `build` method
+		iter_op: Tensorflow.data.Iterator from your data.Dataset
 
 	Returns:
-	    Scalar op containing the total loss for a batch of data
+		Scalar op containing the total loss for a batch of data
 	"""
 	inputs = iter_op.get_next()
 	model.build(scope, *inputs)
@@ -79,12 +78,12 @@ def average_gradients(tower_grads):
 	Note that this function provides a synchronization point across all towers.
 
 	Args:
-	  tower_grads: List of lists of (gradient, variable) tuples. The outer list
+		tower_grads: List of lists of (gradient, variable) tuples. The outer list
 		is over individual gradients. The inner list is over the gradient
 		calculation for each tower.
 	Returns:
-	   List of pairs of (gradient, variable) where the gradient has been averaged
-	   across all towers.
+		List of pairs of (gradient, variable) where the gradient has been averaged
+		across all towers.
 	"""
 	average_grads = []
 	for grad_and_vars in zip(*tower_grads):
@@ -93,7 +92,6 @@ def average_gradients(tower_grads):
 		grads = []
 		print(grad_and_vars)
 		for g, _ in grad_and_vars:
-
 			# Add 0 dimension to the gradients to represent the tower.
 			expanded_g = tf.expand_dims(g, 0)
 
@@ -124,7 +122,7 @@ def train(model, optimizer, iter_op, clip_param = None):
 
 		tower_grads = []
 		summaries = None
-		with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
+		with tf.variable_scope(tf.get_variable_scope(), reuse = tf.AUTO_REUSE):
 			for i in range(NUM_GPUS):
 				with tf.device('/gpu:%d' % i):
 					with tf.name_scope('%s_%d' % (model.TOWER_NAME, i)) as scope:
