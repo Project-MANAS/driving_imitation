@@ -1,171 +1,94 @@
 import tensorflow as tf
-import tensorflow.contrib.slim as slim
-from tensorflow.python.util import nest
+import tfutils as tu
 
-from .dataset.constant import *
+from dataset.constant import *
 
 
 class Komanda:
-	def __init__(self, dataset_mean = 0, dataset_variance = 1):
-		self.keep_prob = tf.placeholder_with_default(1.0, (), "keep_prob")
-		self.aux_cost_weight = tf.placeholder_with_default(0.1, (), "aux_cost_weight")
-		self.mean = dataset_mean
-		self.var = dataset_variance
-		self.info = {}
-		self.output = {}
-		self.TOWER_NAME = "KomandaBoi"
+    def __init__(self, batch_size, seq_len, dataset_mean = 0, dataset_variance = 1):
+        self.keep_prob = tf.placeholder_with_default(1.0, (), "keep_prob")
+        self.aux_cost_weight = tf.placeholder_with_default(0.1, (), "aux_cost_weight")
+        self.batch_size = batch_size
+        self.seq_len = seq_len
+        self.mean = dataset_mean
+        self.var = dataset_variance
+        self.info = {}
+        self.output = {}
+        self.TOWER_NAME = "KomandaBoi"
 
-	@staticmethod
-	def swish(x):
-		return x * tf.nn.sigmoid(x)
+    def flatten(self, inputs):
+        # inputs is of size (batch_size, channels, seq_len, height, width) --> (batch_size * seq_len, c*h*w)
+        channels_last = tf.transpose(inputs, [0, 2, 3, 4, 1])
+        flattened = tf.reshape(channels_last, [self.batch_size * self.seq_len, -1])
+        return flattened
 
-	def apply_vision_simple(self, video, keep_prob, batch_size, seq_len, scope = None, reuse = None):
-		with tf.variable_scope('vision', reuse = tf.AUTO_REUSE):
-			with slim.arg_scope([slim.model_variable, slim.variable], device = '/cpu:0'):
-				net = slim.convolution(video, 64, [3, 12, 12], [1, 6, 6], "VALID", activation_fn = self.swish)
-				net = tf.nn.dropout(net, keep_prob)
-				aux1 = slim.fully_connected(tf.reshape(net[:, -seq_len:, :, :, :], [batch_size, seq_len, -1]), 128,
-				                            None)
+    def vision_block(self, video, op_dev, wt_dev):
+        # video is of shape (batch_size, channels, seq_len, height, width)
+        activation_fn = tf.nn.relu
 
-				net = slim.convolution(net, 64, [2, 5, 5], [1, 2, 2], "VALID", activation_fn = self.swish)
-				net = tf.nn.dropout(net, keep_prob)
-				aux2 = slim.fully_connected(tf.reshape(net[:, -seq_len:, :, :, :], [batch_size, seq_len, -1]), 128,
-				                            None)
+        net1 = tu.layers.conv3d(video, 'conv3d_1', 64, [3, 12, 12], [1, 6, 6], "VALID", [1, 1, 1], "NCDHW", wt_dev,
+                                op_dev)
+        net1 = activation_fn(net1)
+        net1 = tf.nn.dropout(net1, self.keep_prob)
 
-				net = slim.convolution(net, 64, [2, 5, 5], [1, 1, 1], "VALID", activation_fn = self.swish)
-				net = tf.nn.dropout(net, keep_prob)
-				aux3 = slim.fully_connected(tf.reshape(net[:, -seq_len:, :, :, :], [batch_size, seq_len, -1]), 128,
-				                            None)
+        net2 = tu.layers.conv3d(net1, 'conv3d_2', 64, [2, 5, 5], [1, 2, 2], "VALID", [1, 1, 1], "NCDHW", wt_dev, op_dev)
+        net2 = activation_fn(net2)
+        net2 = tf.nn.dropout(net2, self.keep_prob)
 
-				net = slim.convolution(net, 64, [2, 5, 5], [1, 1, 1], "VALID", activation_fn = self.swish)
-				net = tf.nn.dropout(net, keep_prob)
-				aux4 = slim.fully_connected(tf.reshape(net, [batch_size, seq_len, -1]), 128, None)
+        net3 = tu.layers.conv3d(net2, 'conv3d_3', 64, [2, 5, 5], [1, 1, 1], "VALID", [1, 1, 1], "NCDHW", wt_dev, op_dev)
+        net3 = activation_fn(net3)
+        net3 = tf.nn.dropout(net3, self.keep_prob)
 
-				net = slim.fully_connected(tf.reshape(net, [batch_size, seq_len, -1]), 1024, self.swish)
-				net = tf.nn.dropout(net, keep_prob)
-				net = slim.fully_connected(net, 512, self.swish)
-				net = tf.nn.dropout(net, keep_prob)
-				net = slim.fully_connected(net, 256, self.swish)
-				net = tf.nn.dropout(net, keep_prob)
-				net = slim.fully_connected(net, 128, None)
-				x = self.swish(net + aux1 + aux2 + aux3 + aux4)
+        net4 = tu.layers.conv3d(net3, 'conv3d_4', 64, [2, 5, 5], [1, 1, 1], "VALID", [1, 1, 1], "NCDHW", wt_dev, op_dev)
+        net4 = activation_fn(net4)
+        net4 = tf.nn.dropout(net4, self.keep_prob)
 
-				return tf.contrib.layers.layer_norm(inputs = x, center = True, scale = True, activation_fn = None,
-				                                    trainable = True)
+        flat = self.flatten(net4)
+        net5 = tu.layers.dense(flat, 'fc_1', 1024, True, wt_dev, op_dev)
+        net5 = activation_fn(net5)
+        net5 = tf.nn.dropout(net5, self.keep_prob)
 
-	class SamplingRNNCell(tf.nn.rnn_cell.RNNCell):
-		"""Simple sampling RNN cell."""
+        net6 = tu.layers.dense(net5, 'fc_2', 512, True, wt_dev, op_dev)
+        net6 = activation_fn(net6)
+        net6 = tf.nn.dropout(net6, self.keep_prob)
 
-		def __init__(self, num_outputs, use_ground_truth, internal_cell, **kwargs):
-			"""
-			if use_ground_truth then don't sample
-			"""
-			self._num_outputs = num_outputs
-			self._use_ground_truth = use_ground_truth  # boolean
-			self._internal_cell = internal_cell  # may be LSTM or GRU or anything
+        net7 = tu.layers.dense(net6, 'fc_3', 256, True, wt_dev, op_dev)
+        net7 = activation_fn(net7)
+        net7 = tf.nn.dropout(net7, self.keep_prob)
 
-		@property
-		def state_size(self):
-			return self._num_outputs, self._internal_cell.state_size  # previous output and bottleneck state
+        net8 = tu.layers.dense(net7, 'fc_4', 128, True, wt_dev, op_dev)
+        net8 = activation_fn(net8)
+        net8 = tf.nn.dropout(net8, self.keep_prob)
 
-		@property
-		def output_size(self):
-			return self._num_outputs  # steering angle, torque, vehicle speed
+        aux1 = self.flatten(net1[:, :, -self.seq_len:, :, :])
+        aux1 = tu.layers.dense(aux1, 'aux_1', 128, True, wt_dev, op_dev)
+        aux2 = self.flatten(net2[:, :, -self.seq_len:, :, :])
+        aux2 = tu.layers.dense(aux2, 'aux_2', 128, True, wt_dev, op_dev)
+        aux3 = self.flatten(net3[:, :, -self.seq_len:, :, :])
+        aux3 = tu.layers.dense(aux3, 'aux_3', 128, True, wt_dev, op_dev)
+        aux4 = self.flatten(net4[:, :, -self.seq_len:, :, :])
+        aux4 = tu.layers.dense(aux4, 'aux_4', 128, True, wt_dev, op_dev)
 
-		def __call__(self, inputs, state, scope = None):
-			(visual_feats, current_ground_truth) = inputs
-			prev_output, prev_state_internal = state
-			context = tf.concat([prev_output, visual_feats], 1)
-			new_output_internal, new_state_internal = self._internal_cell(context, prev_state_internal)
-			new_output = tf.contrib.layers.fully_connected(
-				inputs = tf.concat([new_output_internal, prev_output, visual_feats], 1),
-				num_outputs = self._num_outputs,
-				activation_fn = None,
-				scope = "OutputProjection")
-			# if self._use_ground_truth == True, we pass the ground truth as the state
-			# otherwise, we use the model's predictions
-			return new_output, (current_ground_truth if self._use_ground_truth else new_output, new_state_internal)
+        net9 = activation_fn(aux1 + aux2 + aux3 + aux4 + net8)
+        unflat = tf.reshape(net9, [self.batch_size, self.seq_len, -1])
+        return tf.contrib.layers.layer_norm(unflat)
 
-	graph = tf.get_default_graph()
+    def build(self, video, targets, op_dev, wt_dev, training = True):
+        conv_net = self.vision_block(video, op_dev, wt_dev)
+        conv_net = tf.nn.dropout(conv_net, self.keep_prob)
+        conv_net = tf.transpose(conv_net, [1, 0, 2])
 
-	def build(self, scope, video, targets_normalized):
-		with self.graph.as_default():
-			with tf.name_scope(scope):
-				visual_conditions_reshaped = self.apply_vision_simple(video, self.keep_prob, BATCH_SIZE, SEQ_LEN)
+        lstm_cell = tf.contrib.cudnn_rnn.CudnnLSTM(RNN_LAYERS, RNN_SIZE)
+        outputs, _ = lstm_cell(conv_net, training = training)  # (seq_len, batch, RNN_SIZE)
+        outputs = tf.reshape(outputs, [self.seq_len * self.batch_size, -1])
+        outputs = tu.layers.dense(outputs, 'prediction', OUTPUT_DIM, True, wt_dev, op_dev)
+        outputs = tf.reshape(outputs, [self.seq_len, self.batch_size, -1])
 
-				visual_conditions = tf.reshape(visual_conditions_reshaped, [BATCH_SIZE, SEQ_LEN, -1])
-				visual_conditions = tf.nn.dropout(visual_conditions, self.keep_prob)
+        overall_mse = tf.reduce_mean(tf.squared_difference(targets, outputs), name = 'overall_mse')
+        steering_mse = tf.reduce_mean(tf.squared_difference(targets[:, :, 0], outputs[:, :, 0]), name = 'steering_mse')
+        total_loss = tf.identity(self.aux_cost_weight * overall_mse + steering_mse, name = 'total_loss')
+        tf.add_to_collection('losses', total_loss)
 
-				rnn_inputs_with_ground_truth = (visual_conditions, targets_normalized)
-				rnn_inputs_autoregressive = (visual_conditions, tf.zeros((BATCH_SIZE, SEQ_LEN, OUTPUT_DIM), tf.float32))
-
-				internal_cell = tf.nn.rnn_cell.LSTMCell(RNN_SIZE, num_proj = RNN_PROJ)
-				cell_with_ground_truth = self.SamplingRNNCell(OUTPUT_DIM, True, internal_cell)
-				cell_autoregressive = self.SamplingRNNCell(OUTPUT_DIM, False, internal_cell)
-
-				def get_initial_state(complex_state_tuple_sizes):
-					flat_sizes = nest.flatten(complex_state_tuple_sizes)
-					init_state_flat = [tf.tile(
-						multiples = [BATCH_SIZE, 1],
-						input = tf.get_variable("controller_initial_state_%d" % i, initializer = tf.zeros_initializer,
-						                        shape = ([1, s]),
-						                        dtype = tf.float32))
-						for i, s in enumerate(flat_sizes)]
-					init_state = nest.pack_sequence_as(complex_state_tuple_sizes, init_state_flat)
-					return init_state
-
-				def deep_copy_initial_state(complex_state_tuple):
-					flat_state = nest.flatten(complex_state_tuple)
-					flat_copy = [tf.identity(s) for s in flat_state]
-					deep_copy = nest.pack_sequence_as(complex_state_tuple, flat_copy)
-					return deep_copy
-
-				controller_initial_state_variables = get_initial_state(cell_autoregressive.state_size)
-				controller_initial_state_autoregressive = deep_copy_initial_state(controller_initial_state_variables)
-				controller_initial_state_gt = deep_copy_initial_state(controller_initial_state_variables)
-
-				with tf.variable_scope("predictor_ground_truth"):
-					out_gt, controller_final_state_gt = tf.nn.dynamic_rnn(
-						cell = cell_with_ground_truth,
-						inputs = rnn_inputs_with_ground_truth,
-						sequence_length = [SEQ_LEN] * BATCH_SIZE,
-						initial_state = controller_initial_state_gt,
-						dtype = tf.float32,
-						swap_memory = True,
-						time_major = False)
-
-				with tf.variable_scope("predictor_autoregressive"):
-					out_autoregressive, controller_final_state_autoregressive = tf.nn.dynamic_rnn(
-						cell = cell_autoregressive,
-						inputs = rnn_inputs_autoregressive,
-						sequence_length = [SEQ_LEN] * BATCH_SIZE,
-						initial_state = controller_initial_state_autoregressive,
-						dtype = tf.float32,
-						swap_memory = True,
-						time_major = False)
-
-				with tf.name_scope("regression"):
-					mse_gt = tf.reduce_mean(tf.squared_difference(out_gt, targets_normalized))
-					mse_autoregressive = tf.reduce_mean(tf.squared_difference(out_autoregressive, targets_normalized))
-					mse_autoregressive_steering = tf.reduce_mean(
-						tf.squared_difference(out_autoregressive[:, :, 0], targets_normalized[:, :, 0]))
-					steering_predictions = (out_autoregressive[:, :, 0] * self.var) + self.mean
-
-					total_loss = mse_autoregressive_steering + self.aux_cost_weight * (mse_gt + mse_autoregressive)
-
-					tf.add_to_collection('losses', total_loss)
-
-					mse_autoregressive_steering_sqrt = tf.sqrt(mse_autoregressive_steering)
-					mse_gt_sqrt = tf.sqrt(mse_gt)
-					mse_autoregressive_sqrt = tf.sqrt(mse_autoregressive)
-
-					self.output = {'mse_autoregressive_steering': mse_autoregressive_steering,
-					               'controller_final_state_gt': controller_final_state_gt,
-					               'controller_final_state_autoregressive': controller_final_state_autoregressive,
-					               'controller_initial_state_autoregressive': controller_initial_state_autoregressive,
-					               'steering_predictions': steering_predictions}
-
-					self.info = {'mse_autoregressive_steering_sqrt': mse_autoregressive_steering_sqrt,
-					             'mse_autoregressive_sqrt': mse_autoregressive_sqrt,
-					             'mse_gt': mse_gt,
-					             'mse_gt_sqrt': mse_gt_sqrt}
+        steering_prediction = outputs[:, :, 0] * self.var + self.mean
+        self.info = {'steering_prediction': steering_prediction}
+        self.output = (steering_mse, overall_mse, total_loss)

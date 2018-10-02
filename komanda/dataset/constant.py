@@ -9,15 +9,14 @@ SEQ_LEN = 10
 LEFT_CONTEXT = 5
 BATCH_SIZE = 1
 BUFFER_SIZE = 10
-N_CAMS = 3
 N_THREADS = 8
 
 HEIGHT = 480
 WIDTH = 640
-CHANNELS = 3  # RGB
+CHANNELS = 3
 
 RNN_SIZE = 32
-RNN_PROJ = 32
+RNN_LAYERS = 1
 
 NUM_EPOCHS = 100
 
@@ -26,10 +25,9 @@ OUTPUTS = CSV_HEADER[-6:-3]  # angle,torque,speed
 OUTPUT_DIM = len(OUTPUTS)  # predict all features: steering angle, torque and vehicle speed
 
 CHECKPOINT_DIR = '/tmp'
-DATASET_DIR = '~/Workspace/dataset/'
-INTERPOLATED_CSV_DIR = '~/Workspace/dataset/'
+DATASET_DIR = '/home/lastjedi/Workspace/dataset/'
 print('CHECKPOINT_DIR :', CHECKPOINT_DIR)
 print('DATASET_DIR :', DATASET_DIR)
 
-validation_fraction = 0.001
-test_fraction = 0.001
+validation_fraction = 0.01
+test_fraction = 0.01
