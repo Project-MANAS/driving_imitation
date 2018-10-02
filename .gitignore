@@ -2,4 +2,5 @@
 *.pyc
 *.npy
 *.json
-*.hdf5
+*.hdf
+*.DS_Store
