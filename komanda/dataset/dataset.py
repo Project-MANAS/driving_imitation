@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 import cv2
+import tqdm
 
 from .constant import *
 
@@ -39,12 +40,15 @@ def image_normalize(img_filenames):
     metrics_file = Path(DATASET_DIR + "image_metrics.npy")
 
     if metrics_file.exists():
+        print("Image metrics: mean and stddev found")
         metrics = np.load(DATASET_DIR + "image_metrics.npy")
         return metrics[0], metrics[1]
 
+    print("Calculating image metrics: mean and stddev")
     welford = Welford()
 
-    for img_filename in img_filenames:
+    for i in tqdm.trange(len(img_filenames)):
+        img_filename = img_filenames[i]
         img = cv2.imread(DATASET_DIR + img_filename)
         welford(img)
 
@@ -79,7 +83,7 @@ def process_csv(filename):
     mean_targets = tf.constant(np.mean(targets, axis = 0), tf.float32, name = "mean_targets")
     std_targets = tf.constant(np.std(targets, axis = 0), tf.float32, name = "std_targets")
 
-    mean_images, std_images = image_normalize(inputs[0:100])
+    mean_images, std_images = image_normalize(inputs)
 
     mean_images = tf.constant(mean_images, tf.float32, name = "mean_images")
     std_images = tf.constant(std_images, tf.float32, name = "std_images")

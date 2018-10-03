@@ -1,13 +1,13 @@
 import math
 
+import multi_gpu
 import numpy as np
 import tensorflow as tf
-from tensorflow.python.client import timeline
-
-import multi_gpu
+import tqdm
 from dataset.constant import *
 from dataset.dataset import get_datasets, DatasetType
 from model import Komanda
+from tensorflow.python.client import timeline
 
 iter_op, type_ops, mean, var, no_of_iters = get_datasets()
 
@@ -37,33 +37,35 @@ print("All bois are built")
 KEEP_PROB_TRAIN = 0.25
 
 
-def do_epoch(sess, run_type: DatasetType):
-    acc_loss = np.float128(0.0)
+def do_train_epoch(sess):
+    sess.run(type_ops[DatasetType.TRAIN])
+    accumulated_loss = np.float128(0.0)
+    ops = [train_op, total_loss, summaries]
+    feed_dict = {model.keep_prob: KEEP_PROB_TRAIN}
 
+    for _ in tqdm.trange(no_of_iters[DatasetType.TRAIN]):
+        _, loss, summary = sess.run(ops, feed_dict)
+        train_writer.add_summary(summary)
+        accumulated_loss += loss
+
+    avg_loss = accumulated_loss / no_of_iters[DatasetType.TRAIN]
+    print('Average training loss:', avg_loss)
+    return avg_loss
+
+
+def do_test_epoch(sess, run_type: DatasetType):
+    accumulated_loss = np.float128(0.0)
     sess.run(type_ops[run_type])
-    ops_train = [train_op, total_loss, summaries]
-    ops_valid_test = [total_loss, summaries]
-    for step in range(no_of_iters[run_type]):
-        feed_dict = {}
+    ops = [total_loss, summaries]
+    summary_writer = test_writer if DatasetType.TEST == run_type else valid_writer
 
-        if run_type == DatasetType.TRAIN:
-            feed_dict.update({model.keep_prob: KEEP_PROB_TRAIN})
-            _, loss, summary = session.run(ops_train)
-            train_writer.add_summary(summary)
-        else:
-            loss, summary = session.run(ops_valid_test)
+    for _ in tqdm.trange(no_of_iters[run_type]):
+        loss, summary = sess.run(ops)
+        summary_writer.add_summary(summary)
+        accumulated_loss += loss
 
-            if run_type == DatasetType.TEST:
-                test_writer.add_summary(summary)
-            else:
-                valid_writer.add_summary(summary)
-
-        acc_loss += loss
-        print('Iter', step, '\t', loss)
-
-    avg_loss = acc_loss / no_of_iters[run_type]
-    print('Average loss this epoch:', avg_loss)
-
+    avg_loss = accumulated_loss / no_of_iters[run_type]
+    print('Average loss:', avg_loss)
     return avg_loss
 
 
@@ -72,7 +74,7 @@ def run_tf_profiling(sess):
     options = tf.RunOptions(trace_level = tf.RunOptions.FULL_TRACE)
     run_metadata = tf.RunMetadata()
     for _ in range(10):
-        sess.run(train_op, options = options, run_metadata = run_metadata, feed_dict={model.keep_prob: 0.25})
+        sess.run(train_op, options = options, run_metadata = run_metadata, feed_dict = {model.keep_prob: 0.25})
 
     fetched_timeline = timeline.Timeline(run_metadata.step_stats)
     chrome_trace = fetched_timeline.generate_chrome_trace_format()
@@ -88,14 +90,11 @@ with tf.Session(graph = tf.get_default_graph(), config = config) as session:
     session.run(tf.global_variables_initializer())
     print("All bois are initialized")
 
-    run_tf_profiling(session)
-    exit()
-
     for epoch in range(NUM_EPOCHS):
         print("Starting epoch %d / %d" % (epoch, NUM_EPOCHS))
 
-        valid_score = do_epoch(session, DatasetType.VALIDATION)
-        print("Validation score:", valid_score)
+        print("Validation:")
+        valid_score = do_test_epoch(session, DatasetType.VALIDATION)
 
         if valid_score < best_validation_score:
             # saver.save(session, CHECKPOINT_DIR + '/checkpoint')
@@ -104,9 +103,9 @@ with tf.Session(graph = tf.get_default_graph(), config = config) as session:
 
         if epoch != NUM_EPOCHS - 1:
             print('Komanda boii is training')
-            do_epoch(session, DatasetType.TRAIN)
+            do_train_epoch(session)
 
         if epoch == NUM_EPOCHS - 1:
             print("Test:")
-            test_score = do_epoch(session, DatasetType.TEST)
+            test_score = do_test_epoch(session, DatasetType.TEST)
             print('Final test loss:', test_score)
