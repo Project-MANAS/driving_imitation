@@ -97,7 +97,8 @@ with tf.Session(graph = tf.get_default_graph(), config = config) as session:
         valid_score = do_test_epoch(session, DatasetType.VALIDATION)
 
         if valid_score < best_validation_score:
-            # saver.save(session, CHECKPOINT_DIR + '/checkpoint')
+            saver.save(session, CHECKPOINT_DIR + '/checkpoint_loss_' + str(valid_score),
+                       global_step = tf.get_default_graph().get_tensor_by_name('global_step:0'))
             best_validation_score = valid_score
             print("SAVED at epoch %d" % epoch)
 
